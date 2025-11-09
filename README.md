@@ -23,53 +23,6 @@
 
 ## What Even Is This?
 
-### The Origin Story (A Tale of 15 Seconds That Changed Everything)
-
-It was a dark and stormy night. Well, actually it was Tuesday afternoon, but that's not dramatic enough. I was downloading a file. A simple file. Nothing special. Just your average, run-of-the-mill download that should have taken 30 seconds.
-
-But Chrome? Chrome decided it needed **45 seconds**. 
-
-**FIFTEEN. SECONDS. TOO. LONG.**
-
-That's when I snapped. I looked at my browser's download manager, with its single-threaded download, no resume support worth mentioning, and complete lack of respect for my time. And I thought: "This is unacceptable. This is an affront to efficiency. This is... *dramatic pause* ...15 seconds of my life I'll never get back."
-
-So I did what any reasonable developer would do: I spent weeks building a download manager from scratch. Because 15 seconds was too much to bear. Because segmented downloads matter. Because parallel connections are a human right. Because sometimes you need to take a stand against mediocrity, even if that stand involves writing thousands of lines of Python and JavaScript.
-
-Meanwhile, my fellow engineers were busy revolutionizing the world with AI that can write code, machine learning models that predict the future, and quantum computing that might solve problems I haven't even thought of yet. And me? I was optimizing HTTP downloads because Chrome took 15 seconds too long.
-
-*Chef's kiss* to priorities.
-
-And thus, **ACCELARA** was born. Not from necessity. Not from a gap in the market. Not from a desire to change the world. But from pure, unadulterated pettiness over 15 seconds, while the rest of the engineering world was busy building the future. I chose... differently.
-
-Was it worth it? Absolutely. Every single second of development time was justified by those 15 seconds Chrome stole from me. And now? Now I can download files in 14 seconds instead of 45. Take that, Chrome.
-
-
-Look, I'll be honest. When I started this project, I hadn't written a single line of React, JavaScript, or CSS since passing my "Introduction to Web Technologies" Computer Science class back in 2013. That class taught me how to make tables with `<table>` tags and use inline styles. It was a simpler time.
-
-Fast forward to building ACCELARA's Electron GUI, and suddenly I'm knee-deep in React hooks, Tailwind CSS, component architecture, state management, and trying to figure out why my charts won't render. It was... educational. Painfully educational at times, but educational nonetheless.
-
-Then I decided to rewrite the entire Python backend in Go. Not because I wanted to learn Go (I already knew it), but because Python wasn't looking pretty in my IDE and I needed something to prototype with. Also, Go has some pretty compelling technical advantages that made the rewrite worthwhile:
-
-- **Single Binary Deployment**: No virtual environments, no dependency hell, just one executable file. It's like magic, but real.
-- **Better Performance**: Go's compiled nature and efficient concurrency model (goroutines) make it significantly faster than Python for I/O-bound operations like downloads. Those 15 seconds? Now they're 12 seconds. Progress.
-- **Static Typing**: Catch errors at compile time instead of runtime. Your future self will thank you.
-- **Excellent Concurrency**: Goroutines make handling multiple downloads and connections trivial. No GIL, no threading nightmares, just clean concurrent code.
-- **Cross-Platform Compilation**: Build for Windows, macOS, and Linux from a single machine. No need for three different computers or VMs.
-- **Smaller Memory Footprint**: Go binaries are lean and mean. Your RAM will thank you.
-
-So while this project started as pure pettiness over 15 seconds, it ended up being a crash course in modern frontend development AND a complete backend rewrite because Python looked ugly in my editor. I learned React from scratch. I learned Tailwind CSS (and discovered that writing CSS is still hard, but at least now I have utility classes). I learned that building a GUI is significantly more complex than building a CLI, and I have newfound respect for frontend developers everywhere.
-
-Was it worth it? For the 15 seconds? Probably not. For the IDE aesthetics? Absolutely. Sometimes the best projects are the ones that force you to learn things you've been avoiding for a decade, and then rewrite everything in a different language just because the syntax highlighting looked better.
-
-So if you're reading this and thinking "I could never build something like this," remember: neither could I, until I did. And if I can go from 2013-era web development knowledge to building a full Electron app with a Go backend (because Python looked ugly), you can probably figure out whatever it is you're procrastinating on too.
-
-Now if you'll excuse me, I need to go optimize some more HTTP downloads. In Go. Because it looks prettier. Priorities.
-
----
-
----
-
-### The Actual Description
 
 So you're tired of `wget` being boring, `curl` being cryptic, and your browser download manager being... well, a browser download manager that takes 15 seconds too long. Welcome to **ACCELARA** - the download manager that actually gives a damn about your bandwidth and your time.
 
@@ -151,7 +104,7 @@ Now you can run it like a real program:
 
 ### Prerequisites (The Full Stack)
 
-- Node.js 18+ and npm - I needed more dependencies
+- Node.js 20+ and npm - I needed more dependencies (Vite requires 20.19+ or 22.12+)
 - Go 1.21+ (for the backend)
 - Make (optional, but recommended)
 
@@ -264,7 +217,7 @@ jobs:
           go-version: '1.21'
       - uses: actions/setup-node@v3
         with:
-          node-version: '18'
+          node-version: '20'
       - run: go mod download
       - run: npm install
       - run: npm run build
@@ -342,7 +295,7 @@ jobs:
           go-version: '1.21'
       - uses: actions/setup-node@v3
         with:
-          node-version: '18'
+          node-version: '20'
       - run: go mod download
       - run: npm install
       - run: npm run build
@@ -358,7 +311,7 @@ Push to GitHub, grab a coffee, and come back to find builds for all platforms. I
 
 ```bash
 # Build for Linux (easy, you're probably on Linux or macOS)
-docker run --rm -v $(pwd):/app -w /app node:18 bash -c "npm install && npm run build"
+docker run --rm -v $(pwd):/app -w /app node:20 bash -c "npm install && npm run build"
 
 # For Windows, you'll need a Windows container (which requires Windows)
 # So... back to Option 1, I guess?
