@@ -77,7 +77,7 @@ release/
 
 # Node
 node_modules/
-package-lock.json
+# package-lock.json - Keep this! GitHub Actions needs it
 yarn.lock
 
 # Go
