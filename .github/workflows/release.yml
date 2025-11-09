@@ -100,6 +100,31 @@ jobs:
           fi
         env:
           ELECTRON_SKIP_BINARY_DOWNLOAD: 'false'
+      
+      - name: List build outputs
+        shell: bash
+        run: |
+          echo "=== Build Output Structure ==="
+          if [ -d "release" ]; then
+            find release -type f -name "*.dmg" -o -name "*.app" -o -name "*.exe" -o -name "*.AppImage" 2>/dev/null | head -20
+            echo ""
+            echo "=== Release directory contents ==="
+            ls -la release/ 2>/dev/null || echo "release/ not found"
+            if [ -d "release/mac" ]; then
+              echo "=== release/mac contents ==="
+              ls -la release/mac/ 2>/dev/null
+            fi
+            if [ -d "release/mac-arm64" ]; then
+              echo "=== release/mac-arm64 contents ==="
+              ls -la release/mac-arm64/ 2>/dev/null
+            fi
+            if [ -d "release/mac-x64" ]; then
+              echo "=== release/mac-x64 contents ==="
+              ls -la release/mac-x64/ 2>/dev/null
+            fi
+          else
+            echo "release directory does not exist"
+          fi
 
       - name: Find build artifacts
         id: find-artifacts
@@ -113,14 +138,19 @@ jobs:
           if [ "${{ matrix.platform }}" == "mac" ]; then
             # Try multiple possible locations
             if [ -d "release" ]; then
-              # Use || true to prevent grep from failing the script
-              ARTIFACT=$(find release -name "${{ matrix.file_pattern }}" -type f 2>/dev/null | grep -E "(mac|darwin)" | head -1 || true)
-              APP_BUNDLE=$(find release -name "*.app" -type d 2>/dev/null | grep -E "(mac|darwin)" | head -1 || true)
-              if [ -z "$ARTIFACT" ]; then
-                ARTIFACT=$(find release -name "${{ matrix.file_pattern }}" -type f 2>/dev/null | head -1 || true)
+              # Search in common electron-builder output locations
+              # electron-builder can output to: release/mac, release/mac-arm64, release/mac-x64, or just release/
+              ARTIFACT=$(find release -name "${{ matrix.file_pattern }}" -type f 2>/dev/null | head -1 || true)
+              APP_BUNDLE=$(find release -name "*.app" -type d 2>/dev/null | head -1 || true)
+              
+              # If still not found, try architecture-specific directories
+              if [ -z "$ARTIFACT" ] && [ "${{ matrix.goarch }}" == "arm64" ]; then
+                ARTIFACT=$(find release/mac-arm64 -name "${{ matrix.file_pattern }}" -type f 2>/dev/null | head -1 || true)
+                APP_BUNDLE=$(find release/mac-arm64 -name "*.app" -type d 2>/dev/null | head -1 || true)
               fi
-              if [ -z "$APP_BUNDLE" ]; then
-                APP_BUNDLE=$(find release -name "*.app" -type d 2>/dev/null | head -1 || true)
+              if [ -z "$ARTIFACT" ] && [ "${{ matrix.goarch }}" == "amd64" ]; then
+                ARTIFACT=$(find release/mac -name "${{ matrix.file_pattern }}" -type f 2>/dev/null | head -1 || true)
+                APP_BUNDLE=$(find release/mac -name "*.app" -type d 2>/dev/null | head -1 || true)
               fi
             fi
             echo "artifact=$ARTIFACT" >> $GITHUB_OUTPUT
