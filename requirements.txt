@@ -1,0 +1,8 @@
+# Core HTTP client
+aiohttp>=3.9.0
+
+# BitTorrent support (install one of the following)
+# For Linux & macOS:
+libtorrent>=2.0.11
+# For Windows (alternative):
+# python-libtorrent>=2.0.11

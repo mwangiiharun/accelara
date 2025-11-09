@@ -1,0 +1,32 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <title>Simple Test</title>
+  <style>
+    body {
+      background: #0f172a;
+      color: white;
+      font-family: system-ui;
+      padding: 40px;
+      font-size: 24px;
+    }
+    .success { color: #10b981; }
+    .error { color: #ef4444; }
+  </style>
+</head>
+<body>
+  <h1 class="success">✅ Electron Can Render HTML!</h1>
+  <p>If you see this, Electron is working.</p>
+  <p>Time: <span id="time"></span></p>
+  <p>ElectronAPI: <span id="electron-api"></span></p>
+  <script>
+    document.getElementById('time').textContent = new Date().toLocaleTimeString();
+    const apiStatus = typeof window.electronAPI !== 'undefined' ? 
+      '<span class="success">Available</span>' : 
+      '<span class="error">Not Available</span>';
+    document.getElementById('electron-api').innerHTML = apiStatus;
+    console.log('Test page loaded!');
+  </script>
+</body>
+</html>
+

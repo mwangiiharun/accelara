@@ -1,0 +1,175 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* Ensure components fit within window */
+html, body, #root {
+  width: 100%;
+  height: 100%;
+  overflow: hidden;
+  margin: 0;
+  padding: 0;
+}
+
+/* Responsive adjustments */
+@media (max-width: 1024px) {
+  .lg\:col-span-2 {
+    grid-column: span 1;
+  }
+  .lg\:col-span-1 {
+    grid-column: span 1;
+  }
+}
+
+@layer base {
+  * {
+    box-sizing: border-box;
+  }
+  
+  html, body {
+    margin: 0;
+    padding: 0;
+    width: 100%;
+    height: 100%;
+    overflow: hidden;
+  }
+  
+  #root {
+    width: 100%;
+    height: 100vh;
+    min-height: 100vh;
+  }
+  
+  /* True Dark Theme (Black/Dark Gray) */
+  .theme-dark {
+    --bg-primary: #000000;
+    --bg-secondary: #0a0a0a;
+    --bg-tertiary: #141414;
+    --bg-hover: #1a1a1a;
+    --border: #1f1f1f;
+    --text-primary: #ffffff;
+    --text-secondary: #a0a0a0;
+    --text-tertiary: #666666;
+  }
+  
+  /* Light Theme */
+  .theme-light {
+    --bg-primary: #ffffff;
+    --bg-secondary: #f5f5f5;
+    --bg-tertiary: #e5e5e5;
+    --bg-hover: #e0e0e0;
+    --border: #d0d0d0;
+    --text-primary: #1a1a1a;
+    --text-secondary: #4a4a4a;
+    --text-tertiary: #6b6b6b;
+  }
+  
+  /* Cyan Theme */
+  .theme-cyan {
+    --bg-primary: #001a1a;
+    --bg-secondary: #002626;
+    --bg-tertiary: #003333;
+    --bg-hover: #004040;
+    --border: #005555;
+    --text-primary: #00ffff;
+    --text-secondary: #00cccc;
+    --text-tertiary: #009999;
+  }
+  
+  body {
+    background-color: var(--bg-primary) !important;
+    color: var(--text-primary) !important;
+  }
+  
+  .theme-container {
+    background-color: var(--bg-primary);
+    color: var(--text-primary);
+  }
+}
+
+@layer components {
+  .card {
+    background-color: var(--bg-secondary);
+    border: 1px solid var(--border);
+    border-radius: 0.5rem;
+    padding: 1rem;
+    box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1);
+  }
+  
+  .btn-primary {
+    background-color: #0284c7;
+    color: white;
+    font-weight: 500;
+    padding: 0.5rem 1rem;
+    border-radius: 0.5rem;
+    transition: background-color 0.2s;
+  }
+  
+  .btn-primary:hover {
+    background-color: #0369a1;
+  }
+  
+  .btn-secondary {
+    background-color: var(--bg-tertiary);
+    color: var(--text-primary);
+    font-weight: 500;
+    padding: 0.5rem 1rem;
+    border-radius: 0.5rem;
+    transition: background-color 0.2s;
+  }
+  
+  .btn-secondary:hover {
+    background-color: var(--bg-hover);
+  }
+  
+  .input-field {
+    background-color: var(--bg-tertiary);
+    border: 1px solid var(--border);
+    border-radius: 0.5rem;
+    padding: 0.5rem 0.75rem;
+    color: var(--text-primary);
+  }
+  
+  .input-field::placeholder {
+    color: var(--text-tertiary);
+  }
+  
+  .input-field:focus {
+    outline: none;
+    ring: 2px;
+    ring-color: #0284c7;
+  }
+  
+  /* Theme utility classes */
+  .theme-bg-primary {
+    background-color: var(--bg-primary);
+  }
+  
+  .theme-bg-secondary {
+    background-color: var(--bg-secondary);
+  }
+  
+  .theme-bg-tertiary {
+    background-color: var(--bg-tertiary);
+  }
+  
+  .theme-bg-hover {
+    background-color: var(--bg-hover);
+  }
+  
+  .theme-text-primary {
+    color: var(--text-primary);
+  }
+  
+  .theme-text-secondary {
+    color: var(--text-secondary);
+  }
+  
+  .theme-text-tertiary {
+    color: var(--text-tertiary);
+  }
+  
+  .theme-border {
+    border-color: var(--border);
+  }
+}

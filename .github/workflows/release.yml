@@ -1,0 +1,277 @@
+name: Build and Release
+
+on:
+  push:
+    tags:
+      - 'v*.*.*'
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Release version (e.g., v1.0.0)'
+        required: true
+        type: string
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: macos-latest
+            platform: mac
+            goos: darwin
+            goarch: amd64
+            artifact_name: mac-x64
+            file_pattern: "*.dmg"
+          - os: macos-latest
+            platform: mac
+            goos: darwin
+            goarch: arm64
+            artifact_name: mac-arm64
+            file_pattern: "*.dmg"
+          - os: windows-latest
+            platform: win
+            goos: windows
+            goarch: amd64
+            artifact_name: win-x64
+            file_pattern: "*.exe"
+          - os: ubuntu-latest
+            platform: linux
+            goos: linux
+            goarch: amd64
+            artifact_name: linux-x64
+            file_pattern: "*.AppImage"
+
+    runs-on: ${{ matrix.os }}
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.21'
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '18'
+          cache: 'npm'
+
+      - name: Install Go dependencies
+        run: go mod download
+
+      - name: Build Go API wrapper
+        env:
+          GOOS: ${{ matrix.goos }}
+          GOARCH: ${{ matrix.goarch }}
+        run: |
+          go build -ldflags="-s -w" -o bin/api-wrapper${{ matrix.goos == 'windows' && '.exe' || '' }} ./cmd/api-wrapper
+
+      - name: Build Go CLI tool
+        env:
+          GOOS: ${{ matrix.goos }}
+          GOARCH: ${{ matrix.goarch }}
+        run: |
+          go build -ldflags="-s -w" -o bin/clidm${{ matrix.goos == 'windows' && '.exe' || '' }} ./cmd/clidm
+
+      - name: Install npm dependencies
+        run: npm ci
+
+      - name: Build React frontend
+        run: npm run build:react
+
+      - name: Build Electron app
+        shell: bash
+        run: |
+          if [ "${{ matrix.platform }}" == "mac" ]; then
+            if [ "${{ matrix.goarch }}" == "amd64" ]; then
+              npx electron-builder --mac --x64
+            else
+              npx electron-builder --mac --arm64
+            fi
+          elif [ "${{ matrix.platform }}" == "win" ]; then
+            npx electron-builder --win
+          else
+            npx electron-builder --linux
+          fi
+        env:
+          ELECTRON_SKIP_BINARY_DOWNLOAD: 'false'
+
+      - name: Find build artifacts
+        id: find-artifacts
+        shell: bash
+        run: |
+          if [ "${{ matrix.platform }}" == "mac" ]; then
+            # Try multiple possible locations
+            ARTIFACT=$(find release -name "${{ matrix.file_pattern }}" -type f | grep -E "(mac|darwin)" | head -1)
+            APP_BUNDLE=$(find release -name "*.app" -type d | grep -E "(mac|darwin)" | head -1)
+            if [ -z "$ARTIFACT" ]; then
+              ARTIFACT=$(find release -name "${{ matrix.file_pattern }}" -type f | head -1)
+            fi
+            if [ -z "$APP_BUNDLE" ]; then
+              APP_BUNDLE=$(find release -name "*.app" -type d | head -1)
+            fi
+            echo "artifact=$ARTIFACT" >> $GITHUB_OUTPUT
+            echo "app_bundle=$APP_BUNDLE" >> $GITHUB_OUTPUT
+          elif [ "${{ matrix.platform }}" == "win" ]; then
+            ARTIFACT=$(find release -name "${{ matrix.file_pattern }}" -type f | head -1)
+            echo "artifact=$ARTIFACT" >> $GITHUB_OUTPUT
+            echo "app_bundle=" >> $GITHUB_OUTPUT
+          else
+            ARTIFACT=$(find release -name "${{ matrix.file_pattern }}" -type f | head -1)
+            echo "artifact=$ARTIFACT" >> $GITHUB_OUTPUT
+            echo "app_bundle=" >> $GITHUB_OUTPUT
+          fi
+          echo "Found artifact: $ARTIFACT"
+          echo "Found app bundle: $APP_BUNDLE"
+
+      - name: Upload macOS DMG
+        if: matrix.platform == 'mac' && steps.find-artifacts.outputs.artifact != ''
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.artifact_name }}-dmg
+          path: ${{ steps.find-artifacts.outputs.artifact }}
+          retention-days: 30
+
+      - name: Upload macOS App Bundle
+        if: matrix.platform == 'mac' && steps.find-artifacts.outputs.app_bundle != ''
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.artifact_name }}-app
+          path: ${{ steps.find-artifacts.outputs.app_bundle }}
+          retention-days: 30
+
+      - name: Upload Windows installer
+        if: matrix.platform == 'win' && steps.find-artifacts.outputs.artifact != ''
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.artifact_name }}-installer
+          path: ${{ steps.find-artifacts.outputs.artifact }}
+          retention-days: 30
+
+      - name: Upload Linux AppImage
+        if: matrix.platform == 'linux' && steps.find-artifacts.outputs.artifact != ''
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.artifact_name }}-appimage
+          path: ${{ steps.find-artifacts.outputs.artifact }}
+          retention-days: 30
+
+      - name: Upload CLI binaries
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.artifact_name }}-cli
+          path: bin/clidm*
+          retention-days: 30
+
+  release:
+    needs: build
+    runs-on: ubuntu-latest
+    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v') || github.event_name == 'workflow_dispatch'
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Determine version
+        id: version
+        shell: bash
+        run: |
+          if [ "${{ github.event_name }}" == "workflow_dispatch" ]; then
+            VERSION="${{ github.event.inputs.version }}"
+          else
+            VERSION="${GITHUB_REF#refs/tags/}"
+          fi
+          echo "version=$VERSION" >> $GITHUB_OUTPUT
+          echo "Version: $VERSION"
+
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+
+      - name: Prepare release assets
+        shell: bash
+        run: |
+          mkdir -p release-assets
+          
+          # macOS DMGs
+          for dmg in artifacts/*mac*-dmg/*.dmg; do
+            if [ -f "$dmg" ]; then
+              cp "$dmg" "release-assets/ACCELARA-$(basename $(dirname $dmg) | sed 's/-dmg//').dmg"
+            fi
+          done
+          
+          # macOS App bundles (zip them)
+          for app in artifacts/*mac*-app/*.app; do
+            if [ -d "$app" ]; then
+              zip -r "release-assets/ACCELARA-$(basename $(dirname $app) | sed 's/-app//').app.zip" "$app"
+            fi
+          done
+          
+          # Windows installers
+          for exe in artifacts/*win*-installer/*.exe; do
+            if [ -f "$exe" ]; then
+              cp "$exe" "release-assets/ACCELARA-$(basename $(dirname $exe) | sed 's/-installer//').exe"
+            fi
+          done
+          
+          # Linux AppImages
+          for appimage in artifacts/*linux*-appimage/*.AppImage; do
+            if [ -f "$appimage" ]; then
+              cp "$appimage" "release-assets/ACCELARA-$(basename $(dirname $appimage) | sed 's/-appimage//').AppImage"
+            fi
+          done
+          
+          # CLI binaries
+          mkdir -p release-assets/cli
+          for cli in artifacts/*-cli/*; do
+            if [ -f "$cli" ]; then
+              cp "$cli" "release-assets/cli/$(basename $cli)"
+            fi
+          done
+          
+          # Create checksums
+          cd release-assets
+          find . -type f -exec sha256sum {} \; > SHA256SUMS.txt
+          cd ..
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v1
+        with:
+          tag_name: ${{ steps.version.outputs.version }}
+          name: Release ${{ steps.version.outputs.version }}
+          body: |
+            ## ACCELARA ${{ steps.version.outputs.version }}
+            
+            ### Downloads
+            
+            **macOS:**
+            - Intel: `ACCELARA-mac-x64.dmg`
+            - Apple Silicon: `ACCELARA-mac-arm64.dmg`
+            
+            **Windows:**
+            - `ACCELARA-win-x64.exe`
+            
+            **Linux:**
+            - `ACCELARA-linux-x64.AppImage`
+            
+            ### CLI Tools
+            
+            Standalone CLI binaries are available in the `cli/` directory.
+            
+            ### Checksums
+            
+            See `SHA256SUMS.txt` for file integrity verification.
+            
+            ---
+            
+            *Built with ❤️ and Go*
+          files: release-assets/*
+          draft: false
+          prerelease: ${{ contains(steps.version.outputs.version, '-') || contains(steps.version.outputs.version, 'alpha') || contains(steps.version.outputs.version, 'beta') || contains(steps.version.outputs.version, 'rc') }}
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+

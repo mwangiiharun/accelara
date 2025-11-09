@@ -1,0 +1,95 @@
+# Byte-compiled / optimized / DLL files
+__pycache__/
+*.py[cod]
+*$py.class
+
+# C extensions
+*.so
+
+# Distribution / packaging
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+pip-wheel-metadata/
+share/python-wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+MANIFEST
+
+# PyInstaller
+*.manifest
+*.spec
+
+# Unit test / coverage reports
+htmlcov/
+.tox/
+.nox/
+.coverage
+.coverage.*
+.cache
+nosetests.xml
+coverage.xml
+*.cover
+*.py,cover
+.hypothesis/
+.pytest_cache/
+
+# Virtual environments
+venv/
+ENV/
+env/
+.venv
+
+# IDEs
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+
+# Project-specific
+*.part.*
+*.clidm.json
+*.clidm.json.tmp
+*.tmp
+
+# Electron
+dist/
+build/
+!build/icon.icns
+!build/icon.ico
+*.log
+downloads_history.json
+settings.json
+release/
+
+# Node
+node_modules/
+package-lock.json
+yarn.lock
+
+# Go
+bin/
+*.exe
+*.test
+*.out
+go.work
+
+
+# Downloads (optional - uncomment if you don't want to track downloaded files)
+# downloads/
+# *.iso
+# *.zip
+# *.tar.gz

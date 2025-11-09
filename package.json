@@ -1,0 +1,156 @@
+{
+  "name": "accelara",
+  "version": "1.0.0",
+  "type": "commonjs",
+  "description": "ACCELARA - Unified HTTP + BitTorrent CLI Download Manager with Electron GUI",
+  "main": "electron/main.js",
+  "scripts": {
+    "dev": "make build-api && concurrently \"npm run dev:react\" \"npm run dev:electron\"",
+    "dev:react": "vite",
+    "dev:electron": "wait-on http://localhost:5173 && electron .",
+    "build": "make build-api && vite build && electron-builder",
+    "build:react": "vite build",
+    "build:go": "make build",
+    "preview": "vite preview"
+  },
+  "keywords": [
+    "download-manager",
+    "bittorrent",
+    "http",
+    "electron"
+  ],
+  "author": "Mwangii Kinuthia",
+  "license": "MIT",
+  "devDependencies": {
+    "@electron/rebuild": "^4.0.1",
+    "@types/node": "^20.19.24",
+    "@types/react": "^18.3.26",
+    "@types/react-dom": "^18.3.7",
+    "@vitejs/plugin-react": "^4.7.0",
+    "autoprefixer": "^10.4.20",
+    "concurrently": "^9.2.1",
+    "electron": "^39.1.1",
+    "electron-builder": "^26.0.12",
+    "electron-rebuild": "^3.2.9",
+    "postcss": "^8.4.47",
+    "tailwindcss": "^3.4.18",
+    "typescript": "^5.7.2",
+    "vite": "^7.2.2",
+    "wait-on": "^9.0.3"
+  },
+  "dependencies": {
+    "clsx": "^2.1.1",
+    "lucide-react": "^0.462.0",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1",
+    "recharts": "^2.15.4",
+    "sql.js": "^1.13.0"
+  },
+  "overrides": {
+    "inflight": "npm:inflight@^1.0.6",
+    "glob": "^10.0.0",
+    "rimraf": "^5.0.0",
+    "boolean": "^4.0.0",
+    "@npmcli/move-file": "npm:@npmcli/fs@^3.0.0"
+  },
+  "build": {
+    "appId": "com.accelara.downloader",
+    "productName": "ACCELARA",
+    "publish": null,
+    "asar": true,
+    "directories": {
+      "output": "release"
+    },
+    "files": [
+      "dist/**/*",
+      "electron/**/*",
+      "package.json",
+      "!node_modules/**/*",
+      "!**/*.{md,txt,log}",
+      "!**/test/**/*",
+      "!**/tests/**/*"
+    ],
+    "extraFiles": [
+      {
+        "from": "bin/api-wrapper",
+        "to": "bin/api-wrapper"
+      }
+    ],
+    "extraResources": [
+      "bin/api-wrapper",
+      "build/icon.icns",
+      "build/icon.ico"
+    ],
+    "mac": {
+      "category": "public.app-category.utilities",
+      "icon": "build/icon.icns",
+      "target": [
+        {
+          "target": "dmg",
+          "arch": ["arm64"]
+        }
+      ],
+      "protocols": [
+        {
+          "name": "Magnet Link",
+          "schemes": [
+            "magnet"
+          ]
+        }
+      ]
+    },
+    "win": {
+      "icon": "build/icon.ico",
+      "target": [
+        {
+          "target": "nsis",
+          "arch": [
+            "x64"
+          ]
+        }
+      ],
+      "protocols": [
+        {
+          "name": "Magnet Link",
+          "schemes": [
+            "magnet"
+          ]
+        }
+      ]
+    },
+    "linux": {
+      "target": [
+        {
+          "target": "AppImage",
+          "arch": [
+            "x64"
+          ]
+        }
+      ],
+      "protocols": [
+        {
+          "name": "Magnet Link",
+          "schemes": [
+            "magnet"
+          ]
+        }
+      ]
+    },
+    "protocols": [
+      {
+        "name": "Magnet Link",
+        "schemes": [
+          "magnet"
+        ]
+      }
+    ],
+    "fileAssociations": [
+      {
+        "ext": "torrent",
+        "name": "Torrent File",
+        "description": "BitTorrent file",
+        "mimeType": "application/x-bittorrent"
+      }
+    ]
+  }
+}

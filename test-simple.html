@@ -1,0 +1,27 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <title>Test Page</title>
+  <style>
+    body {
+      background: #0f172a;
+      color: white;
+      font-family: system-ui;
+      padding: 40px;
+      text-align: center;
+    }
+    h1 { color: #0ea5e9; }
+  </style>
+</head>
+<body>
+  <h1>✅ Electron is Loading HTML!</h1>
+  <p>If you see this, Electron can load pages from Vite.</p>
+  <p>Time: <span id="time"></span></p>
+  <script>
+    document.getElementById('time').textContent = new Date().toLocaleTimeString();
+    console.log('Test page loaded successfully!');
+    console.log('window.electronAPI:', typeof window.electronAPI !== 'undefined' ? 'Available' : 'Not available');
+  </script>
+</body>
+</html>
+
