@@ -66,6 +66,7 @@ jobs:
         env:
           GOOS: ${{ matrix.goos }}
           GOARCH: ${{ matrix.goarch }}
+          CGO_ENABLED: ${{ matrix.goos == 'windows' && '0' || '1' }}
         run: |
           go build -ldflags="-s -w" -o bin/api-wrapper${{ matrix.goos == 'windows' && '.exe' || '' }} ./cmd/api-wrapper
 
@@ -73,6 +74,7 @@ jobs:
         env:
           GOOS: ${{ matrix.goos }}
           GOARCH: ${{ matrix.goarch }}
+          CGO_ENABLED: ${{ matrix.goos == 'windows' && '0' || '1' }}
         run: |
           go build -ldflags="-s -w" -o bin/clidm${{ matrix.goos == 'windows' && '.exe' || '' }} ./cmd/clidm
 
@@ -103,29 +105,49 @@ jobs:
         id: find-artifacts
         shell: bash
         run: |
+          set +e  # Don't exit on error
+          set +o pipefail  # Don't fail on pipe errors
+          ARTIFACT=""
+          APP_BUNDLE=""
+          
           if [ "${{ matrix.platform }}" == "mac" ]; then
             # Try multiple possible locations
-            ARTIFACT=$(find release -name "${{ matrix.file_pattern }}" -type f | grep -E "(mac|darwin)" | head -1)
-            APP_BUNDLE=$(find release -name "*.app" -type d | grep -E "(mac|darwin)" | head -1)
-            if [ -z "$ARTIFACT" ]; then
-              ARTIFACT=$(find release -name "${{ matrix.file_pattern }}" -type f | head -1)
-            fi
-            if [ -z "$APP_BUNDLE" ]; then
-              APP_BUNDLE=$(find release -name "*.app" -type d | head -1)
+            if [ -d "release" ]; then
+              # Use || true to prevent grep from failing the script
+              ARTIFACT=$(find release -name "${{ matrix.file_pattern }}" -type f 2>/dev/null | grep -E "(mac|darwin)" | head -1 || true)
+              APP_BUNDLE=$(find release -name "*.app" -type d 2>/dev/null | grep -E "(mac|darwin)" | head -1 || true)
+              if [ -z "$ARTIFACT" ]; then
+                ARTIFACT=$(find release -name "${{ matrix.file_pattern }}" -type f 2>/dev/null | head -1 || true)
+              fi
+              if [ -z "$APP_BUNDLE" ]; then
+                APP_BUNDLE=$(find release -name "*.app" -type d 2>/dev/null | head -1 || true)
+              fi
             fi
             echo "artifact=$ARTIFACT" >> $GITHUB_OUTPUT
             echo "app_bundle=$APP_BUNDLE" >> $GITHUB_OUTPUT
           elif [ "${{ matrix.platform }}" == "win" ]; then
-            ARTIFACT=$(find release -name "${{ matrix.file_pattern }}" -type f | head -1)
+            if [ -d "release" ]; then
+              ARTIFACT=$(find release -name "${{ matrix.file_pattern }}" -type f 2>/dev/null | head -1 || true)
+            fi
             echo "artifact=$ARTIFACT" >> $GITHUB_OUTPUT
             echo "app_bundle=" >> $GITHUB_OUTPUT
           else
-            ARTIFACT=$(find release -name "${{ matrix.file_pattern }}" -type f | head -1)
+            if [ -d "release" ]; then
+              ARTIFACT=$(find release -name "${{ matrix.file_pattern }}" -type f 2>/dev/null | head -1 || true)
+            fi
             echo "artifact=$ARTIFACT" >> $GITHUB_OUTPUT
             echo "app_bundle=" >> $GITHUB_OUTPUT
           fi
-          echo "Found artifact: $ARTIFACT"
-          echo "Found app bundle: $APP_BUNDLE"
+          
+          if [ -n "$ARTIFACT" ]; then
+            echo "Found artifact: $ARTIFACT"
+          else
+            echo "Warning: No artifact found for pattern ${{ matrix.file_pattern }}"
+          fi
+          
+          if [ -n "$APP_BUNDLE" ]; then
+            echo "Found app bundle: $APP_BUNDLE"
+          fi
 
       - name: Upload macOS DMG
         if: matrix.platform == 'mac' && steps.find-artifacts.outputs.artifact != ''
