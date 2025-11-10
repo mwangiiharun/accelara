@@ -11,7 +11,8 @@
     "build": "make build-api && vite build && electron-builder",
     "build:react": "vite build",
     "build:go": "make build",
-    "preview": "vite preview"
+    "preview": "vite preview",
+    "postinstall": "electron-builder install-app-deps"
   },
   "keywords": [
     "download-manager",

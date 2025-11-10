@@ -46,9 +46,6 @@ win:
   target:
     - nsis
   artifactName: "ACCELARA-${arch}-${version}.${ext}"
-  signingHashAlgorithms: null
-  certificateFile: null
-  certificatePassword: null
   protocols:
     - name: Magnet Link
       schemes:
