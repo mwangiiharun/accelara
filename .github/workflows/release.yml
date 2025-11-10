@@ -79,34 +79,93 @@ jobs:
             npx electron-builder --linux --x64 --publish never
           fi
 
+      - name: Find and Upload Artifact
+        id: find-artifact
+        shell: bash
+        run: |
+          set +e
+          ARTIFACT=$(find release -name "*.${{ matrix.ext }}" -type f 2>/dev/null | head -1 || true)
+          if [ -z "$ARTIFACT" ]; then
+            echo "ERROR: No ${{ matrix.ext }} file found in release/"
+            find release -type f 2>/dev/null | head -10
+            exit 1
+          fi
+          echo "artifact=$ARTIFACT" >> $GITHUB_OUTPUT
+          echo "Found artifact: $ARTIFACT"
+
       - name: Upload Artifact
         uses: actions/upload-artifact@v4
         with:
           name: accelara-${{ matrix.platform }}-${{ matrix.arch }}
-          path: release/*.${{ matrix.ext }}
+          path: ${{ steps.find-artifact.outputs.artifact }}
+          retention-days: 30
 
   release:
     needs: build
     runs-on: ubuntu-latest
+    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
 
     steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Determine version
+        id: version
+        run: |
+          VERSION="${GITHUB_REF#refs/tags/}"
+          echo "version=$VERSION" >> $GITHUB_OUTPUT
+          echo "Version: $VERSION"
+
       - name: Download artifacts
         uses: actions/download-artifact@v4
         with:
           path: artifacts
 
-      - name: Create checksums
+      - name: Prepare release assets
+        shell: bash
         run: |
-          cd artifacts
+          mkdir -p release-assets
+          
+          # Copy all artifacts with proper naming
+          for file in artifacts/accelara-*/*; do
+            if [ -f "$file" ]; then
+              name=$(basename "$file")
+              # Extract platform and arch from artifact folder name
+              folder=$(basename $(dirname "$file"))
+              newname="ACCELARA-${folder#accelara-}.${name##*.}"
+              cp "$file" "release-assets/$newname"
+            fi
+          done
+          
+          # Create checksums
+          cd release-assets
           find . -type f -exec sha256sum {} \; > SHA256SUMS.txt
 
       - name: Publish GitHub Release
         uses: softprops/action-gh-release@v1
         with:
-          files: |
-            artifacts/**/*.dmg
-            artifacts/**/*.exe
-            artifacts/**/*.AppImage
-            artifacts/SHA256SUMS.txt
+          tag_name: ${{ steps.version.outputs.version }}
+          name: Release ${{ steps.version.outputs.version }}
+          body: |
+            ## ACCELARA ${{ steps.version.outputs.version }}
+            
+            ### Downloads
+            
+            **macOS:**
+            - Intel (x64): `ACCELARA-mac-x64.dmg`
+            - Apple Silicon (arm64): `ACCELARA-mac-arm64.dmg`
+            
+            **Windows:**
+            - `ACCELARA-win-x64.exe`
+            
+            **Linux:**
+            - `ACCELARA-linux-x64.AppImage`
+            
+            ### Checksums
+            
+            See `SHA256SUMS.txt` for file integrity verification.
+          files: release-assets/*
+          draft: false
+          prerelease: ${{ contains(steps.version.outputs.version, '-') || contains(steps.version.outputs.version, 'alpha') || contains(steps.version.outputs.version, 'beta') || contains(steps.version.outputs.version, 'rc') }}
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
