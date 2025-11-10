@@ -32,7 +32,7 @@ Oh, and I also built a **fancy Electron GUI** because apparently typing commands
 
 ---
 
-## Features (Because Apparently You Need a List)
+## Features
 
 ### HTTP/HTTPS Downloads - The Boring But Necessary Part
 
@@ -102,15 +102,15 @@ Now you can run it like a real program:
 
 ## Electron GUI Installation (For People Who Don't Like Terminals)
 
-### Prerequisites (The Full Stack)
+### Prerequisites
 
 - Node.js 20+ and npm - I needed more dependencies (Vite requires 20.19+ or 22.12+)
 - Go 1.21+ (for the backend)
 - Make (optional, but recommended)
 
-### Setup (The "Why Is This So Complicated" Part)
+### Setup 
 
-1. **Build the Go backend** (because Go compiles to a single binary):
+1. **Build the Go backend**:
    ```bash
    make build-api
    # Or manually: go build -o bin/api-wrapper ./cmd/api-wrapper
@@ -121,7 +121,7 @@ Now you can run it like a real program:
    npm install
    ```
 
-3. **Run in development mode** - production is overrated:
+3. **Run in development mode** :
    ```bash
    npm run dev
    ```
@@ -131,7 +131,7 @@ Now you can run it like a real program:
    - Launch Electron window - clicking is easier than typing
    - Enable hot reload - watch your changes break in real-time!
 
-4. **Build for production** (when you're ready to ship):
+4. **Build for production**:
    ```bash
    make build-api      # Build Go backend
    npm run build:react # Build React app
@@ -142,7 +142,7 @@ Now you can run it like a real program:
 
 ## Building for Distribution 
 
-So you've built this beautiful download manager and now you want to share it with the world? Or at least with your friends who still use Windows? Good news: I've made it (relatively) easy. Bad news: cross-platform builds require the actual platforms. Who knew?
+Good news: I've made it (relatively) easy. Bad news: cross-platform builds require the actual platforms. Who knew?
 
 ### The One-Command Wonder (If You're Lazy)
 
@@ -153,9 +153,9 @@ npm run build
 ```
 
 This will:
-- Build the Go backend (because Go is awesome and compiles to a single binary)
-- Build the React frontend (because Vite is fast and I'm impatient)
-- Package everything into a beautiful Electron app (because electron-builder does the heavy lifting)
+- Build the Go backend 
+- Build the React frontend 
+- Package everything into a beautiful Electron app
 
 **But wait!** This only builds for your current platform. Want to build for all platforms? Read on, you ambitious soul.
 
@@ -200,7 +200,7 @@ This creates:
 - `ACCELARA Setup.exe` - An NSIS installer that Windows users will recognize
 - Located in `release/win-unpacked/` - The unpacked version (for testing)
 
-**Option 2: Use GitHub Actions (The "I'm Too Lazy to Boot Windows" Solution)**
+**Option 2: Use GitHub Actions **
 
 Create `.github/workflows/build.yml`:
 
@@ -271,11 +271,11 @@ chmod +x release/linux-unpacked/ACCELARA.AppImage
 
 ---
 
-### Cross-Platform Building (The "I Want Everything" Challenge)
+### Cross-Platform Building 
 
 Want to build for all platforms at once? Here's how:
 
-**Option 1: Use GitHub Actions (The Smart Way)**
+**Option 1: Use GitHub Actions**
 
 Create `.github/workflows/build-all.yml`:
 
@@ -307,7 +307,7 @@ jobs:
 
 Push to GitHub, grab a coffee, and come back to find builds for all platforms. It's like having three computers, but free.
 
-**Option 2: Use Docker (The "I Like Containers" Solution)**
+**Option 2: Use Docker**
 
 ```bash
 # Build for Linux (easy, you're probably on Linux or macOS)
@@ -317,7 +317,7 @@ docker run --rm -v $(pwd):/app -w /app node:20 bash -c "npm install && npm run b
 # So... back to Option 1, I guess?
 ```
 
-**Option 3: Actually Have All Three Platforms (The "I'm Rich" Solution)**
+**Option 3: Actually Have All Three Platforms**
 
 If you have macOS, Windows, and Linux machines (or VMs):
 
@@ -329,7 +329,7 @@ Then combine them all and feel like a real software distributor. You've made it.
 
 ---
 
-### Build Configuration (The "Fine-Tuning" Part)
+### Build Configuration
 
 Want to customize the build? Edit `package.json` under the `"build"` section:
 
@@ -367,7 +367,7 @@ Want to customize the build? Edit `package.json` under the `"build"` section:
 
 ---
 
-### Troubleshooting Builds (The "Why Is Nothing Working" Part)
+### Troubleshooting Builds
 
 **"Build failed with 'Go binary not found'"**
 
@@ -410,7 +410,7 @@ Yeah, Electron apps are chonky. The Go binary is ~20MB, Electron runtime is ~100
 
 ---
 
-### Distribution (The "Now What?" Part)
+### Distribution
 
 You've built your app! Congratulations! Now what?
 
@@ -440,19 +440,9 @@ You've built your app! Congratulations! Now what?
 
 ---
 
-### Final Thoughts (The "You Made It" Part)
-
-Building for multiple platforms is a pain. But hey, you built a download manager because Chrome took 15 seconds too long. You're clearly not afraid of a challenge.
-
-The good news: Once you set up GitHub Actions (or have all three platforms), future builds are just `git push` away. The bad news: You'll spend more time debugging cross-platform issues than you did building the actual app.
-
-But that's software development for you. Welcome to the club. We have coffee, existential dread, and the satisfaction of making something that actually works (sometimes).
-
-Now go ship that thing. The world needs another download manager. Probably.
-
 ---
 
-## Usage (Finally, The Good Part)
+## Usage
 
 ### CLI Usage - For Terminal Warriors
 
@@ -506,7 +496,7 @@ Privacy matters:
 ./bin/clidm "magnet:?xt=urn:btih:..." -o /download/path
 ```
 
-#### BitTorrent from Torrent File (The Old School Way)
+#### BitTorrent from Torrent File 
 
 ```bash
 ./bin/clidm /path/to/file.torrent -o /download/path
