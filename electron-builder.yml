@@ -25,7 +25,8 @@ mac:
   category: public.app-category.utilities
   icon: build/icon.icns
   artifactName: "ACCELARA.${ext}"
-  target: dmg
+  target:
+    - dmg
   identity: null
   hardenedRuntime: false
   gatekeeperAssess: false
