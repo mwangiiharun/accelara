@@ -68,6 +68,34 @@ jobs:
 
       - name: Build Frontend
         run: npm run build:react
+      
+      - name: Verify build prerequisites
+        if: matrix.platform == 'linux'
+        run: |
+          echo "=== Verifying Linux build prerequisites ==="
+          echo "Checking for icon file:"
+          if [ ! -f "build/icon.png" ]; then
+            echo "Warning: icon.png not found, creating placeholder from icon.icns"
+            # Try to convert from icns if available, or create a simple placeholder
+            if command -v sips &> /dev/null; then
+              # macOS: use sips to convert
+              sips -s format png build/icon.icns --out build/icon.png 2>/dev/null || echo "Conversion failed"
+            elif command -v convert &> /dev/null; then
+              # Linux: use ImageMagick to convert
+              convert build/icon.icns build/icon.png 2>/dev/null || echo "Conversion failed"
+            else
+              echo "No conversion tool available, electron-builder will use default icon"
+            fi
+          else
+            echo "icon.png found"
+            ls -la build/icon.png
+          fi
+          echo ""
+          echo "Checking for Go binaries:"
+          ls -la bin/api-wrapper bin/clidm || echo "Warning: Go binaries not found"
+          echo ""
+          echo "Checking for dist directory:"
+          ls -la dist/ | head -5 || echo "Warning: dist directory not found"
 
       - name: Build Electron App
         shell: bash
@@ -183,9 +211,45 @@ jobs:
               exit 1
             fi
           elif [ "${{ matrix.platform }}" == "win" ]; then
-            npx electron-builder --win --x64 --publish never
+            echo "=== Building Windows installer ==="
+            npx electron-builder --win --x64 --publish never 2>&1 | tee build.log || true
+            echo ""
+            echo "=== Windows build output ==="
+            if [ -d "release" ]; then
+              find release -name "*.exe" -type f 2>/dev/null || echo "No .exe files found"
+            fi
           else
-            npx electron-builder --linux --x64 --publish never
+            echo "=== Building Linux AppImage ==="
+            # Check if icon exists, if not, electron-builder will use default
+            if [ ! -f "build/icon.png" ]; then
+              echo "Warning: build/icon.png not found, electron-builder will use default icon"
+            fi
+            npx electron-builder --linux --x64 --publish never 2>&1 | tee build.log || {
+              echo "Build command exited with error, checking logs..."
+              if [ -f "build.log" ]; then
+                tail -50 build.log
+              fi
+              echo "Continuing to check for artifacts..."
+            }
+            echo ""
+            echo "=== Linux build output ==="
+            if [ -d "release" ]; then
+              echo "All files in release:"
+              find release -type f 2>/dev/null | head -20 || echo "No files found"
+              echo ""
+              echo "AppImage files:"
+              find release -name "*.AppImage" -type f 2>/dev/null || echo "No .AppImage files found"
+              echo ""
+              echo "ACCELARA files:"
+              find release -name "ACCELARA*" -type f 2>/dev/null || echo "No ACCELARA files found"
+              echo ""
+              echo "Checking build.log for errors:"
+              if [ -f "build.log" ]; then
+                grep -i "error\|fail" build.log | tail -10 || echo "No errors found in log"
+              fi
+            else
+              echo "Release directory does not exist!"
+            fi
           fi
         env:
           ELECTRON_SKIP_BINARY_DOWNLOAD: 'false'
@@ -290,10 +354,16 @@ jobs:
             echo "app_bundle=" >> $GITHUB_OUTPUT
           else
             if [ -d "release" ]; then
-              # Look for AppImage
+              # Look for AppImage - try multiple patterns
+              # electron-builder might create ACCELARA.AppImage or ACCELARA-1.0.0.AppImage
               ARTIFACT=$(find release -name "ACCELARA*.AppImage" -type f 2>/dev/null | head -1 || true)
               if [ -z "$ARTIFACT" ]; then
+                # Try without ACCELARA prefix
                 ARTIFACT=$(find release -name "*.AppImage" -type f 2>/dev/null | head -1 || true)
+              fi
+              if [ -z "$ARTIFACT" ]; then
+                # Try in subdirectories
+                ARTIFACT=$(find release -type f -name "*.AppImage" 2>/dev/null | head -1 || true)
               fi
             fi
             echo "artifact=$ARTIFACT" >> $GITHUB_OUTPUT

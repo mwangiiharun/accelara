@@ -61,7 +61,8 @@ linux:
   protocols:
     - name: Magnet Link
       schemes:
-        - magnet
+      - magnet
+  category: Utility
 
 publish:
   provider: github
