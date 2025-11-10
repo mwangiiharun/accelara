@@ -121,14 +121,18 @@ jobs:
               APP_NAME="$(basename "$APP_BUNDLE")"
               WORKSPACE_ROOT="$(pwd)"
               cd "$APP_DIR" || exit 1
-              zip -r "$WORKSPACE_ROOT/$ZIP_PATH" "$APP_NAME" -q
+              zip -r "$WORKSPACE_ROOT/$ZIP_PATH" "$APP_NAME" -q || {
+                echo "ZIP creation failed, trying alternative method..."
+                cd "$WORKSPACE_ROOT"
+                ditto -c -k --keepParent "$APP_BUNDLE" "$ZIP_PATH" || echo "Alternative ZIP method also failed"
+              }
               ZIP_EXIT=$?
               cd "$WORKSPACE_ROOT" || true
-              if [ $ZIP_EXIT -eq 0 ] && [ -f "$ZIP_PATH" ]; then
+              if [ -f "$ZIP_PATH" ]; then
                 echo "✓ ZIP created: $ZIP_PATH"
                 ls -lh "$ZIP_PATH"
               else
-                echo "✗ ZIP creation failed (exit code: $ZIP_EXIT)"
+                echo "⚠ ZIP creation failed (exit code: $ZIP_EXIT) - continuing with DMG only"
                 echo "Current directory: $(pwd)"
                 echo "App directory: $APP_DIR"
                 echo "Checking for ZIP files:"
