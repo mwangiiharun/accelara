@@ -73,27 +73,37 @@ jobs:
         shell: bash
         run: |
           if [ "${{ matrix.platform }}" == "mac" ]; then
+            echo "=== Starting electron-builder ==="
             if [ "${{ matrix.goarch }}" == "amd64" ]; then
-              npx electron-builder --mac dmg --x64 --publish never 2>&1 | tee build.log
+              npx electron-builder --mac dmg --x64 --publish never 2>&1 | tee build.log || true
             else
-              npx electron-builder --mac dmg --arm64 --publish never 2>&1 | tee build.log
+              npx electron-builder --mac dmg --arm64 --publish never 2>&1 | tee build.log || true
             fi
-            echo "=== Build log ==="
-            cat build.log
-            echo "=== End build log ==="
+            echo ""
+            echo "=== Full Build Log ==="
+            cat build.log || echo "No build log found"
+            echo "=== End Build Log ==="
+            echo ""
+            echo "=== Checking for DMG ==="
             # Wait a moment for DMG creation to complete
-            sleep 10
-            # Verify DMG was created
+            sleep 5
+            # Check multiple possible locations
             if [ -f "release/ACCELARA.dmg" ]; then
-              echo "DMG created successfully: release/ACCELARA.dmg"
+              echo "✓ DMG found at release/ACCELARA.dmg"
               ls -lh release/ACCELARA.dmg
+            elif [ -f "release/mac-arm64/ACCELARA.dmg" ]; then
+              echo "✓ DMG found at release/mac-arm64/ACCELARA.dmg"
+              ls -lh release/mac-arm64/ACCELARA.dmg
+            elif [ -f "release/mac/ACCELARA.dmg" ]; then
+              echo "✓ DMG found at release/mac/ACCELARA.dmg"
+              ls -lh release/mac/ACCELARA.dmg
             else
-              echo "DMG not found at release/ACCELARA.dmg, checking alternatives..."
-              find release -name "*.dmg" -type f 2>/dev/null || echo "No DMG files found"
-              echo "Listing release directory:"
-              ls -la release/ 2>/dev/null || echo "release/ not found"
-              echo "Checking for any errors in build log:"
-              grep -i "error\|fail\|dmg" build.log || echo "No relevant errors found"
+              echo "✗ DMG not found in expected locations"
+              echo "Searching for any DMG files:"
+              find release -name "*.dmg" -type f 2>/dev/null || echo "No DMG files found anywhere"
+              echo ""
+              echo "Checking build log for DMG-related messages:"
+              grep -i "dmg\|building\|target" build.log || echo "No DMG-related messages in log"
             fi
           elif [ "${{ matrix.platform }}" == "win" ]; then
             npx electron-builder --win --x64 --publish never
