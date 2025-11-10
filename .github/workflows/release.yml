@@ -5,47 +5,41 @@ on:
     tags:
       - 'v*.*.*'
   workflow_dispatch:
-    inputs:
-      version:
-        description: 'Release version (e.g., v1.0.0)'
-        required: true
-        type: string
 
 jobs:
   build:
+    runs-on: ${{ matrix.os }}
+
     strategy:
-      fail-fast: false
       matrix:
         include:
           - os: macos-latest
             platform: mac
+            arch: x64
             goos: darwin
             goarch: amd64
-            artifact_name: mac-x64
-            file_pattern: "*.dmg"
+            ext: dmg
           - os: macos-latest
             platform: mac
+            arch: arm64
             goos: darwin
             goarch: arm64
-            artifact_name: mac-arm64
-            file_pattern: "*.dmg"
+            ext: dmg
           - os: windows-latest
             platform: win
+            arch: x64
             goos: windows
             goarch: amd64
-            artifact_name: win-x64
-            file_pattern: "*.exe"
+            ext: exe
           - os: ubuntu-latest
             platform: linux
+            arch: x64
             goos: linux
             goarch: amd64
-            artifact_name: linux-x64
-            file_pattern: "*.AppImage"
-
-    runs-on: ${{ matrix.os }}
+            ext: AppImage
 
     steps:
-      - name: Checkout code
+      - name: Checkout
         uses: actions/checkout@v4
 
       - name: Set up Go
@@ -57,305 +51,62 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: '20'
-          cache: 'npm'
+          cache: npm
 
-      - name: Install Go dependencies
-        run: go mod download
-
-      - name: Build Go API wrapper
+      - name: Build Go binaries
         env:
           GOOS: ${{ matrix.goos }}
           GOARCH: ${{ matrix.goarch }}
           CGO_ENABLED: ${{ matrix.goos == 'windows' && '0' || '1' }}
         run: |
+          mkdir -p bin
           go build -ldflags="-s -w" -o bin/api-wrapper${{ matrix.goos == 'windows' && '.exe' || '' }} ./cmd/api-wrapper
-
-      - name: Build Go CLI tool
-        env:
-          GOOS: ${{ matrix.goos }}
-          GOARCH: ${{ matrix.goarch }}
-          CGO_ENABLED: ${{ matrix.goos == 'windows' && '0' || '1' }}
-        run: |
           go build -ldflags="-s -w" -o bin/clidm${{ matrix.goos == 'windows' && '.exe' || '' }} ./cmd/clidm
 
-      - name: Install npm dependencies
+      - name: Install Node Deps
         run: npm ci
 
-      - name: Build React frontend
+      - name: Build Frontend
         run: npm run build:react
 
-      - name: Build Electron app
-        shell: bash
+      - name: Build Electron App
         run: |
-          if [ "${{ matrix.platform }}" == "mac" ]; then
-            if [ "${{ matrix.goarch }}" == "amd64" ]; then
-              npx electron-builder --mac dmg --x64 --publish never
-            else
-              npx electron-builder --mac dmg --arm64 --publish never
-            fi
-          elif [ "${{ matrix.platform }}" == "win" ]; then
-            npx electron-builder --win --publish never
+          if [ "${{ matrix.platform }}" = "mac" ]; then
+            npx electron-builder --mac dmg --${{ matrix.arch }} --publish never
+          elif [ "${{ matrix.platform }}" = "win" ]; then
+            npx electron-builder --win --x64 --publish never
           else
-            npx electron-builder --linux --publish never
-          fi
-        env:
-          ELECTRON_SKIP_BINARY_DOWNLOAD: 'false'
-      
-      - name: List build outputs
-        shell: bash
-        run: |
-          echo "=== Build Output Structure ==="
-          if [ -d "release" ]; then
-            echo "=== All DMG files ==="
-            find release -name "*.dmg" -type f 2>/dev/null || echo "No DMG files found"
-            echo ""
-            echo "=== All APP bundles ==="
-            find release -name "*.app" -type d 2>/dev/null || echo "No APP bundles found"
-            echo ""
-            echo "=== All files in release ==="
-            find release -type f 2>/dev/null | head -30
-            echo ""
-            echo "=== Release directory structure ==="
-            ls -la release/ 2>/dev/null || echo "release/ not found"
-            if [ -d "release/mac" ]; then
-              echo "=== release/mac contents ==="
-              ls -la release/mac/ 2>/dev/null
-            fi
-            if [ -d "release/mac-arm64" ]; then
-              echo "=== release/mac-arm64 contents ==="
-              ls -la release/mac-arm64/ 2>/dev/null
-            fi
-            if [ -d "release/mac-x64" ]; then
-              echo "=== release/mac-x64 contents ==="
-              ls -la release/mac-x64/ 2>/dev/null
-            fi
-          else
-            echo "release directory does not exist"
+            npx electron-builder --linux --x64 --publish never
           fi
 
-      - name: Find build artifacts
-        id: find-artifacts
-        shell: bash
-        run: |
-          set +e  # Don't exit on error
-          set +o pipefail  # Don't fail on pipe errors
-          ARTIFACT=""
-          APP_BUNDLE=""
-          
-          if [ "${{ matrix.platform }}" == "mac" ]; then
-            # Try multiple possible locations
-            if [ -d "release" ]; then
-              # electron-builder outputs DMG files with the product name
-              # Try finding by pattern first, then by common names
-              ARTIFACT=$(find release -name "${{ matrix.file_pattern }}" -type f 2>/dev/null | head -1 || true)
-              
-              # If pattern search fails, try common DMG names
-              if [ -z "$ARTIFACT" ]; then
-                ARTIFACT=$(find release -name "ACCELARA*.dmg" -type f 2>/dev/null | head -1 || true)
-              fi
-              if [ -z "$ARTIFACT" ]; then
-                ARTIFACT=$(find release -name "*.dmg" -type f 2>/dev/null | head -1 || true)
-              fi
-              
-              # Find app bundle
-              APP_BUNDLE=$(find release -name "ACCELARA.app" -type d 2>/dev/null | head -1 || true)
-              if [ -z "$APP_BUNDLE" ]; then
-                APP_BUNDLE=$(find release -name "*.app" -type d 2>/dev/null | head -1 || true)
-              fi
-              
-              # If still not found, try architecture-specific directories
-              if [ -z "$ARTIFACT" ] && [ "${{ matrix.goarch }}" == "arm64" ]; then
-                ARTIFACT=$(find release/mac-arm64 -name "*.dmg" -type f 2>/dev/null | head -1 || true)
-                APP_BUNDLE=$(find release/mac-arm64 -name "*.app" -type d 2>/dev/null | head -1 || true)
-              fi
-              if [ -z "$ARTIFACT" ] && [ "${{ matrix.goarch }}" == "amd64" ]; then
-                ARTIFACT=$(find release/mac -name "*.dmg" -type f 2>/dev/null | head -1 || true)
-                APP_BUNDLE=$(find release/mac -name "*.app" -type d 2>/dev/null | head -1 || true)
-              fi
-            fi
-            echo "artifact=$ARTIFACT" >> $GITHUB_OUTPUT
-            echo "app_bundle=$APP_BUNDLE" >> $GITHUB_OUTPUT
-          elif [ "${{ matrix.platform }}" == "win" ]; then
-            if [ -d "release" ]; then
-              ARTIFACT=$(find release -name "${{ matrix.file_pattern }}" -type f 2>/dev/null | head -1 || true)
-            fi
-            echo "artifact=$ARTIFACT" >> $GITHUB_OUTPUT
-            echo "app_bundle=" >> $GITHUB_OUTPUT
-          else
-            if [ -d "release" ]; then
-              ARTIFACT=$(find release -name "${{ matrix.file_pattern }}" -type f 2>/dev/null | head -1 || true)
-            fi
-            echo "artifact=$ARTIFACT" >> $GITHUB_OUTPUT
-            echo "app_bundle=" >> $GITHUB_OUTPUT
-          fi
-          
-          if [ -n "$ARTIFACT" ]; then
-            echo "Found artifact: $ARTIFACT"
-          else
-            echo "Warning: No artifact found for pattern ${{ matrix.file_pattern }}"
-          fi
-          
-          if [ -n "$APP_BUNDLE" ]; then
-            echo "Found app bundle: $APP_BUNDLE"
-          fi
-
-      - name: Debug artifact finding
-        if: matrix.platform == 'mac'
-        shell: bash
-        run: |
-          echo "Artifact found: '${{ steps.find-artifacts.outputs.artifact }}'"
-          echo "App bundle found: '${{ steps.find-artifacts.outputs.app_bundle }}'"
-          if [ -z "${{ steps.find-artifacts.outputs.artifact }}" ]; then
-            echo "WARNING: No DMG artifact found!"
-            echo "Searching manually..."
-            find release -name "*.dmg" -type f 2>/dev/null || echo "No DMG files found in release/"
-          fi
-      
-      - name: Upload macOS DMG
-        if: matrix.platform == 'mac' && steps.find-artifacts.outputs.artifact != ''
+      - name: Upload Artifact
         uses: actions/upload-artifact@v4
         with:
-          name: ${{ matrix.artifact_name }}-dmg
-          path: ${{ steps.find-artifacts.outputs.artifact }}
-          retention-days: 30
-
-      - name: Upload macOS App Bundle
-        if: matrix.platform == 'mac' && steps.find-artifacts.outputs.app_bundle != ''
-        uses: actions/upload-artifact@v4
-        with:
-          name: ${{ matrix.artifact_name }}-app
-          path: ${{ steps.find-artifacts.outputs.app_bundle }}
-          retention-days: 30
-
-      - name: Upload Windows installer
-        if: matrix.platform == 'win' && steps.find-artifacts.outputs.artifact != ''
-        uses: actions/upload-artifact@v4
-        with:
-          name: ${{ matrix.artifact_name }}-installer
-          path: ${{ steps.find-artifacts.outputs.artifact }}
-          retention-days: 30
-
-      - name: Upload Linux AppImage
-        if: matrix.platform == 'linux' && steps.find-artifacts.outputs.artifact != ''
-        uses: actions/upload-artifact@v4
-        with:
-          name: ${{ matrix.artifact_name }}-appimage
-          path: ${{ steps.find-artifacts.outputs.artifact }}
-          retention-days: 30
-
-      - name: Upload CLI binaries
-        uses: actions/upload-artifact@v4
-        with:
-          name: ${{ matrix.artifact_name }}-cli
-          path: bin/clidm*
-          retention-days: 30
+          name: accelara-${{ matrix.platform }}-${{ matrix.arch }}
+          path: release/*.${{ matrix.ext }}
 
   release:
     needs: build
     runs-on: ubuntu-latest
-    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v') || github.event_name == 'workflow_dispatch'
 
     steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
-
-      - name: Determine version
-        id: version
-        shell: bash
-        run: |
-          if [ "${{ github.event_name }}" == "workflow_dispatch" ]; then
-            VERSION="${{ github.event.inputs.version }}"
-          else
-            VERSION="${GITHUB_REF#refs/tags/}"
-          fi
-          echo "version=$VERSION" >> $GITHUB_OUTPUT
-          echo "Version: $VERSION"
-
-      - name: Download all artifacts
+      - name: Download artifacts
         uses: actions/download-artifact@v4
         with:
           path: artifacts
 
-      - name: Prepare release assets
-        shell: bash
+      - name: Create checksums
         run: |
-          mkdir -p release-assets
-          
-          # macOS DMGs
-          for dmg in artifacts/*mac*-dmg/*.dmg; do
-            if [ -f "$dmg" ]; then
-              cp "$dmg" "release-assets/ACCELARA-$(basename $(dirname $dmg) | sed 's/-dmg//').dmg"
-            fi
-          done
-          
-          # macOS App bundles (zip them)
-          for app in artifacts/*mac*-app/*.app; do
-            if [ -d "$app" ]; then
-              zip -r "release-assets/ACCELARA-$(basename $(dirname $app) | sed 's/-app//').app.zip" "$app"
-            fi
-          done
-          
-          # Windows installers
-          for exe in artifacts/*win*-installer/*.exe; do
-            if [ -f "$exe" ]; then
-              cp "$exe" "release-assets/ACCELARA-$(basename $(dirname $exe) | sed 's/-installer//').exe"
-            fi
-          done
-          
-          # Linux AppImages
-          for appimage in artifacts/*linux*-appimage/*.AppImage; do
-            if [ -f "$appimage" ]; then
-              cp "$appimage" "release-assets/ACCELARA-$(basename $(dirname $appimage) | sed 's/-appimage//').AppImage"
-            fi
-          done
-          
-          # CLI binaries
-          mkdir -p release-assets/cli
-          for cli in artifacts/*-cli/*; do
-            if [ -f "$cli" ]; then
-              cp "$cli" "release-assets/cli/$(basename $cli)"
-            fi
-          done
-          
-          # Create checksums
-          cd release-assets
+          cd artifacts
           find . -type f -exec sha256sum {} \; > SHA256SUMS.txt
-          cd ..
 
-      - name: Create GitHub Release
+      - name: Publish GitHub Release
         uses: softprops/action-gh-release@v1
         with:
-          tag_name: ${{ steps.version.outputs.version }}
-          name: Release ${{ steps.version.outputs.version }}
-          body: |
-            ## ACCELARA ${{ steps.version.outputs.version }}
-            
-            ### Downloads
-            
-            **macOS:**
-            - Intel: `ACCELARA-mac-x64.dmg`
-            - Apple Silicon: `ACCELARA-mac-arm64.dmg`
-            
-            **Windows:**
-            - `ACCELARA-win-x64.exe`
-            
-            **Linux:**
-            - `ACCELARA-linux-x64.AppImage`
-            
-            ### CLI Tools
-            
-            Standalone CLI binaries are available in the `cli/` directory.
-            
-            ### Checksums
-            
-            See `SHA256SUMS.txt` for file integrity verification.
-            
-            ---
-            
-            *Built with ❤️ and Go*
-          files: release-assets/*
-          draft: false
-          prerelease: ${{ contains(steps.version.outputs.version, '-') || contains(steps.version.outputs.version, 'alpha') || contains(steps.version.outputs.version, 'beta') || contains(steps.version.outputs.version, 'rc') }}
+          files: |
+            artifacts/**/*.dmg
+            artifacts/**/*.exe
+            artifacts/**/*.AppImage
+            artifacts/SHA256SUMS.txt
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-

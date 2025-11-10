@@ -12,8 +12,8 @@ files:
   - "package.json"
   - "!node_modules/**"
   - "!**/*.md"
-  - "!**/test/**"
   - "!**/tests/**"
+  - "!**/test/**"
 
 extraResources:
   - from: "bin"
@@ -34,8 +34,8 @@ mac:
     - dmg
   hardenedRuntime: false
   gatekeeperAssess: false
-  entitlementsInherit: null
   notarize: false
+  entitlementsInherit: null
   protocols:
     - name: Magnet Link
       schemes:
@@ -81,21 +81,4 @@ fileAssociations:
     description: BitTorrent file
     mimeType: application/x-bittorrent
 
-afterPack: |
-  const path = require("path");
-  const fs = require("fs");
-
-  module.exports = async function(context) {
-    const binPath = path.join(context.appOutDir, "bin");
-    if (fs.existsSync(binPath)) {
-      const files = fs.readdirSync(binPath);
-      for (const file of files) {
-        try {
-          fs.chmodSync(path.join(binPath, file), 0o755);
-          console.log("Set executable permission for", file);
-        } catch (err) {
-          console.warn("Failed to chmod binary:", file, err);
-        }
-      }
-    }
-  };
+afterPack: build/afterPack.js
