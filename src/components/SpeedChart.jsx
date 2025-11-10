@@ -1,7 +1,12 @@
 import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from 'recharts';
 
-export default function SpeedChart({ title, data, color = '#0ea5e9', height = 200 }) {
+export default function SpeedChart({ title, data, color = '#0ea5e9', height = 200, format = 'bytes' }) {
   const formatValue = (value) => {
+    if (format === 'number') {
+      // Format as plain number (for Peers, Seeds, etc.)
+      return Math.round(value).toString();
+    }
+    // Format as bytes (default)
     if (value === 0) return '0 B';
     const units = ['B', 'KB', 'MB', 'GB'];
     let unitIndex = 0;

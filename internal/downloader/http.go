@@ -48,6 +48,15 @@ type HTTPDownloader struct {
 	// For detecting multi-connection issues
 	multiConnectionFailed bool
 	multiConnectionMutex  sync.Mutex
+	
+	// For connection failure tracking and retry
+	connectionFailures    int
+	maxConnectionFailures int
+	lastFailureTime       time.Time
+	connectionFailureMutex sync.Mutex
+	paused                bool
+	pauseReason           string
+	pauseMutex            sync.Mutex
 }
 
 type chunk struct {
@@ -72,22 +81,116 @@ func NewHTTPDownloader(sourceURL, outPath string, opts Options) *HTTPDownloader 
 	}
 
 	return &HTTPDownloader{
-		sourceURL:      sourceURL,
-		outPath:        outPath,
-		chunkSize:      opts.ChunkSize,
-		concurrency:    opts.Connections,
-		rateLimit:      opts.RateLimit,
-		proxy:          opts.Proxy,
-		retries:        opts.Retries,
-		connectTimeout: time.Duration(opts.ConnectTimeout) * time.Second,
-		readTimeout:    time.Duration(opts.ReadTimeout) * time.Second,
-		sha256:         opts.SHA256,
-		quiet:          opts.Quiet,
-		reporter:       opts.StatusReporter,
-		downloadID:     opts.DownloadID,
-		client:         client,
-		lastReportedTime: time.Now(),
+		sourceURL:           sourceURL,
+		outPath:             outPath,
+		chunkSize:           opts.ChunkSize,
+		concurrency:         opts.Connections,
+		rateLimit:           opts.RateLimit,
+		proxy:               opts.Proxy,
+		retries:             opts.Retries,
+		connectTimeout:      time.Duration(opts.ConnectTimeout) * time.Second,
+		readTimeout:         time.Duration(opts.ReadTimeout) * time.Second,
+		sha256:              opts.SHA256,
+		quiet:               opts.Quiet,
+		reporter:            opts.StatusReporter,
+		downloadID:          opts.DownloadID,
+		client:              client,
+		lastReportedTime:    time.Now(),
+		maxConnectionFailures: 10, // Max failures before pausing
 	}
+}
+
+// Helper function to check if download is paused
+func (d *HTTPDownloader) isPaused() bool {
+	d.pauseMutex.Lock()
+	defer d.pauseMutex.Unlock()
+	return d.paused
+}
+
+// Helper function to pause download with reason
+func (d *HTTPDownloader) pauseWithReason(reason string) {
+	d.pauseMutex.Lock()
+	d.paused = true
+	d.pauseReason = reason
+	d.pauseMutex.Unlock()
+	
+	if d.reporter != nil {
+		d.reporter.Report(map[string]interface{}{
+			"type":    "http",
+			"status":  "paused",
+			"message": reason,
+			"pause_reason": reason,
+		})
+	}
+}
+
+// Helper function to check if error is a connection error
+func isConnectionError(err error) bool {
+	if err == nil {
+		return false
+	}
+	errStr := err.Error()
+	return strings.Contains(errStr, "connection reset") ||
+		strings.Contains(errStr, "connection refused") ||
+		strings.Contains(errStr, "connection timed out") ||
+		strings.Contains(errStr, "timeout") ||
+		strings.Contains(errStr, "no such host") ||
+		strings.Contains(errStr, "network is unreachable") ||
+		strings.Contains(errStr, "i/o timeout")
+}
+
+// Helper function to handle connection failure with retry logic
+func (d *HTTPDownloader) handleConnectionFailure(err error) error {
+	if !isConnectionError(err) {
+		return err
+	}
+	
+	d.connectionFailureMutex.Lock()
+	d.connectionFailures++
+	lastFailure := d.lastFailureTime
+	d.lastFailureTime = time.Now()
+	failures := d.connectionFailures
+	d.connectionFailureMutex.Unlock()
+	
+	// If we've had too many failures, pause the download
+	if failures >= d.maxConnectionFailures {
+		reason := fmt.Sprintf("Connection lost: %s. Paused after %d failures. Please check your connection and resume manually.", err.Error(), failures)
+		d.pauseWithReason(reason)
+		return fmt.Errorf("connection lost: paused after %d failures", failures)
+	}
+	
+	// Exponential backoff: wait longer between retries
+	// Reset counter if last failure was more than 30 seconds ago (connection recovered)
+	if !lastFailure.IsZero() && time.Since(lastFailure) > 30*time.Second {
+		d.connectionFailureMutex.Lock()
+		d.connectionFailures = 1 // Reset to 1 (current failure)
+		d.connectionFailureMutex.Unlock()
+	}
+	
+	// Exponential backoff: 1s, 2s, 4s, 8s, etc., max 30s
+	backoff := time.Duration(1<<uint(failures-1)) * time.Second
+	if backoff > 30*time.Second {
+		backoff = 30 * time.Second
+	}
+	
+	// Report retrying status
+	if d.reporter != nil {
+		d.reporter.Report(map[string]interface{}{
+			"type":    "http",
+			"status":  "downloading",
+			"message": fmt.Sprintf("Connection lost, retrying in %v... (attempt %d/%d)", backoff, failures, d.maxConnectionFailures),
+		})
+	}
+	
+	time.Sleep(backoff)
+	return err // Return error to trigger retry
+}
+
+// Helper function to reset connection failure counter on success
+func (d *HTTPDownloader) resetConnectionFailures() {
+	d.connectionFailureMutex.Lock()
+	d.connectionFailures = 0
+	d.connectionFailureMutex.Unlock()
 }
 
 func (d *HTTPDownloader) Download() error {
@@ -304,6 +407,10 @@ func (d *HTTPDownloader) downloadSingle() error {
 	req, _ := http.NewRequest("GET", d.sourceURL, nil)
 	resp, err := d.client.Do(req)
 	if err != nil {
+		// Handle connection errors with retry logic
+		if isConnectionError(err) {
+			return d.handleConnectionFailure(err)
+		}
 		return err
 	}
 	defer resp.Body.Close()
@@ -313,6 +420,11 @@ func (d *HTTPDownloader) downloadSingle() error {
 	lastDownloaded := int64(0)
 
 	for {
+		// Check if paused
+		if d.isPaused() {
+			return fmt.Errorf("download paused: %s", d.pauseReason)
+		}
+		
 		n, err := resp.Body.Read(buf)
 		if n > 0 {
 			file.Write(buf[:n])
@@ -320,6 +432,9 @@ func (d *HTTPDownloader) downloadSingle() error {
 			d.downloaded += int64(n)
 			downloaded := d.downloaded
 			d.downloadedMutex.Unlock()
+			
+			// Reset connection failures on successful read
+			d.resetConnectionFailures()
 
 			now := time.Now()
 			if now.Sub(lastUpdate) > 100*time.Millisecond && d.reporter != nil {
@@ -366,8 +481,26 @@ func (d *HTTPDownloader) downloadSingle() error {
 			break
 		}
 		if err != nil {
+			// Handle connection errors - pause download
+			if isConnectionError(err) {
+				retryErr := d.handleConnectionFailure(err)
+				if retryErr != nil && strings.Contains(retryErr.Error(), "paused") {
+					// Download was paused - don't complete, return error
+					return retryErr
+				}
+				// For single connection, we can't easily retry mid-stream
+				// Pause and let user resume
+				reason := fmt.Sprintf("Connection lost during download: %s. Please resume manually.", err.Error())
+				d.pauseWithReason(reason)
+				return fmt.Errorf("connection lost: %s", err.Error())
+			}
 			return err
 		}
+	}
+	
+	// Check if paused before completing
+	if d.isPaused() {
+		return fmt.Errorf("download paused: %s", d.pauseReason)
 	}
 
 	// Move from temp to final destination
@@ -420,8 +553,18 @@ func (d *HTTPDownloader) downloadSegmented() error {
 			defer func() { <-sem }()
 
 			for attempt := 0; attempt <= d.retries; attempt++ {
+				// Check if paused
+				if d.isPaused() {
+					failedMutex.Lock()
+					failedChunks[idx] = fmt.Errorf("download paused: %s", d.pauseReason)
+					failedMutex.Unlock()
+					return
+				}
+				
 				err := d.downloadChunk(idx, c)
 				if err == nil {
+					// Reset connection failures on success
+					d.resetConnectionFailures()
 					return
 				}
 				
@@ -438,6 +581,20 @@ func (d *HTTPDownloader) downloadSegmented() error {
 					d.multiConnectionFailed = true
 					d.multiConnectionMutex.Unlock()
 					return
+				}
+				
+				// Handle connection errors with retry logic
+				if isConnectionError(err) {
+					retryErr := d.handleConnectionFailure(err)
+					if retryErr != nil && strings.Contains(retryErr.Error(), "paused") {
+						// Download was paused due to too many failures
+						failedMutex.Lock()
+						failedChunks[idx] = retryErr
+						failedMutex.Unlock()
+						return
+					}
+					// Continue retry loop
+					continue
 				}
 				
 				if attempt < d.retries {
@@ -645,6 +802,10 @@ func (d *HTTPDownloader) downloadChunk(idx int, c chunk) error {
 			d.multiConnectionMutex.Lock()
 			d.multiConnectionFailed = true
 			d.multiConnectionMutex.Unlock()
+		}
+		// Handle connection errors with retry logic
+		if isConnectionError(err) {
+			return d.handleConnectionFailure(err)
 		}
 		return err
 	}

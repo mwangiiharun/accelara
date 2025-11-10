@@ -49,6 +49,40 @@ export interface ElectronAPI {
   
   getSystemTheme: () => Promise<'dark' | 'light'>;
   onSystemThemeChange: (callback: (theme: 'dark' | 'light') => void) => void;
+  
+  saveSpeedTestResult: (result: {
+    timestamp?: number;
+    downloadSpeed: number;
+    uploadSpeed: number;
+    latency?: { average: number; min: number; max: number };
+    location?: { city: string; region: string; country: string; isp: string };
+  }) => Promise<{ success: boolean; testId: string }>;
+  
+  getSpeedTestResults: (limit?: number) => Promise<Array<{
+    id: string;
+    timestamp: number;
+    downloadSpeed: number;
+    uploadSpeed: number;
+    latency: { average: number; min: number; max: number } | null;
+    location: { city: string; region: string; country: string; isp: string } | null;
+  }>>;
+  
+  clearSpeedTestResults: () => Promise<{ success: boolean }>;
+  
+  startSpeedTest: (testType?: 'full' | 'latency' | 'download' | 'upload') => Promise<{ testId: string; success: boolean }>;
+  stopSpeedTest: (testId: string) => Promise<{ success: boolean; error?: string }>;
+  onSpeedTestUpdate: (callback: (data: {
+    testId: string;
+    type: string;
+    download_speed?: number;
+    upload_speed?: number;
+    latency?: { average: number; min: number; max: number; google_ping?: number };
+    progress?: number;
+    status: string;
+  }) => void) => void;
+  onSpeedTestComplete: (callback: (data: { testId: string; code: number }) => void) => void;
+  onSpeedTestError: (callback: (data: { testId: string; error: string }) => void) => void;
+  removeSpeedTestListeners: () => void;
 }
 
 declare global {

@@ -108,10 +108,18 @@ func getHTTPInfo() {
 	fileName := ""
 	contentDisposition := resp.Header.Get("Content-Disposition")
 	if contentDisposition != "" {
-		re := regexp.MustCompile(`filename[^;=\n]*=((['"]).*?\2|[^;\n]*)`)
-		matches := re.FindStringSubmatch(contentDisposition)
+		// Try to match filename with quotes (single or double)
+		reQuoted := regexp.MustCompile(`filename[^;=\n]*=['"]([^'"]*)['"]`)
+		matches := reQuoted.FindStringSubmatch(contentDisposition)
 		if len(matches) > 1 {
-			fileName = strings.Trim(matches[1], `"'`)
+			fileName = matches[1]
+		} else {
+			// Try unquoted filename
+			reUnquoted := regexp.MustCompile(`filename[^;=\n]*=([^;\n]+)`)
+			matches = reUnquoted.FindStringSubmatch(contentDisposition)
+			if len(matches) > 1 {
+				fileName = strings.TrimSpace(matches[1])
+			}
 		}
 	}
 

@@ -77,6 +77,19 @@ async function getDatabase() {
         verified_at INTEGER,
         FOREIGN KEY (download_id) REFERENCES downloads(id) ON DELETE CASCADE
       );`);
+      db.run(`CREATE TABLE IF NOT EXISTS speed_test_results (
+        id TEXT PRIMARY KEY,
+        timestamp INTEGER NOT NULL,
+        download_speed INTEGER DEFAULT 0,
+        upload_speed INTEGER DEFAULT 0,
+        latency_avg INTEGER,
+        latency_min INTEGER,
+        latency_max INTEGER,
+        location_city TEXT,
+        location_region TEXT,
+        location_country TEXT,
+        location_isp TEXT
+      );`);
       saveDatabase();
     } catch (err) {
       console.error('Error creating tables:', err);

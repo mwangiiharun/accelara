@@ -53,9 +53,19 @@ func main() {
 		sha256         = flag.String("sha256", "", "SHA256 hash")
 		inspect        = flag.Bool("inspect", false, "Inspect torrent/metadata only")
 		httpInfo       = flag.Bool("http-info", false, "Get HTTP file info only")
+		speedTest      = flag.Bool("speedtest", false, "Run speed test")
+		testType       = flag.String("test-type", "full", "Speed test type: full, latency, download, upload")
 	)
 
 	flag.Parse()
+
+	// Handle speed test mode
+	if *speedTest {
+		// Pass test type to runSpeedTest via environment or modify runSpeedTest to accept it
+		// For now, we'll modify runSpeedTest to read from flag
+		runSpeedTestWithType(*testType)
+		return
+	}
 
 	// Handle inspect mode
 	if *inspect {

@@ -1,4 +1,4 @@
-const { app, BrowserWindow, ipcMain, dialog, Menu, shell, nativeTheme, nativeImage } = require('electron');
+const { app, BrowserWindow, ipcMain, dialog, Menu, shell, nativeTheme, nativeImage, Tray } = require('electron');
 const path = require('node:path');
 const { spawn, exec } = require('node:child_process');
 const fs = require('node:fs');
@@ -10,7 +10,9 @@ console.log('Electron starting...');
 
 let mainWindow;
 let downloadProcesses = new Map();
+let speedTestProcesses = new Map();
 let pendingArgs = null;
+let tray = null;
 
 // Play completion sound notification
 function playCompletionSound() {
@@ -225,17 +227,9 @@ function createWindow() {
     
     event.preventDefault();
     
+    // Always show dialog when there are active downloads
     const db = await getDatabase();
-    const bgModeSetting = db.prepare('SELECT value FROM settings WHERE key = ?').get('backgroundMode');
-    const backgroundMode = bgModeSetting ? JSON.parse(bgModeSetting.value) : null;
-    
-    if (backgroundMode === null) {
-      await handleCloseDialog(db);
-    } else if (backgroundMode) {
-      hideWindowInBackground();
-    } else {
-      await closeCompletely();
-    }
+    await handleCloseDialog(db);
   });
 
   mainWindow.on('closed', () => {
@@ -248,12 +242,12 @@ function createWindow() {
 async function handleCloseDialog(db) {
   const choice = await dialog.showMessageBox(mainWindow, {
     type: 'question',
-    buttons: ['Close Completely', 'Run in Background', 'Cancel'],
+    buttons: ['Kill on Window Close', 'Run in Background', 'Cancel'],
     defaultId: 1,
     cancelId: 2,
     title: 'Active Downloads',
     message: 'You have active downloads running.',
-    detail: 'What would you like to do?\n\n• Close Completely: Stop all downloads and exit\n• Run in Background: Keep downloads running and minimize to tray\n• Cancel: Return to the application',
+    detail: 'What would you like to do?\n\n• Kill on Window Close: Stop all downloads and exit\n• Run in Background: Keep downloads running in background (tray/dock icon)\n• Cancel: Return to the application',
   });
   
   if (choice.response === 2) {
@@ -269,10 +263,10 @@ async function handleCloseDialog(db) {
   );
   
   if (choice.response === 0) {
-    // Close completely
+    // Kill on window close - stop all downloads and exit
     await closeCompletely();
   } else {
-    // Run in background
+    // Run in background - keep downloads running
     hideWindowInBackground();
   }
 }
@@ -280,14 +274,118 @@ async function handleCloseDialog(db) {
 // Helper function to hide window in background mode
 function hideWindowInBackground() {
   mainWindow.hide();
+  
+  // Show dock/taskbar icon when in background
   if (process.platform === 'darwin') {
-    app.dock.hide();
+    app.dock.show();
+  }
+  
+  // Create system tray icon if it doesn't exist
+  if (!tray) {
+    createTrayIcon();
+  }
+}
+
+// Helper function to create system tray icon
+function createTrayIcon() {
+  const isDev = !app.isPackaged;
+  let iconPath;
+  
+  if (process.platform === 'darwin') {
+    // macOS: Use .icns file
+    iconPath = isDev
+      ? path.join(__dirname, '../build/icon.icns')
+      : path.join(process.resourcesPath, 'build/icon.icns');
+  } else if (process.platform === 'win32') {
+    // Windows: Use .ico file
+    iconPath = isDev
+      ? path.join(__dirname, '../build/icon.ico')
+      : path.join(process.resourcesPath, 'build/icon.ico');
+  } else {
+    // Linux: Use .png file
+    iconPath = isDev
+      ? path.join(__dirname, '../build/icon.png')
+      : path.join(process.resourcesPath, 'build/icon.png');
+  }
+  
+  // Fallback to default icon if custom icon not found
+  if (!fs.existsSync(iconPath)) {
+    iconPath = null; // Use default system icon
+  }
+  
+  const icon = iconPath ? nativeImage.createFromPath(iconPath) : null;
+  const image = icon && !icon.isEmpty() ? icon : nativeImage.createEmpty();
+  
+  tray = new Tray(image);
+  
+  // Set tooltip
+  tray.setToolTip('ACCELARA - Downloads running in background');
+  
+  // Create context menu
+  const contextMenu = Menu.buildFromTemplate([
+    {
+      label: 'Show Window',
+      click: () => {
+        if (mainWindow) {
+          mainWindow.show();
+          if (process.platform === 'darwin') {
+            app.dock.show();
+          }
+          // Destroy tray icon when window is shown
+          destroyTrayIcon();
+        }
+      }
+    },
+    {
+      label: 'Quit',
+      click: () => {
+        tray.destroy();
+        tray = null;
+        closeCompletely();
+      }
+    }
+  ]);
+  
+  tray.setContextMenu(contextMenu);
+  
+  // Double-click to show window (macOS/Linux)
+  if (process.platform !== 'win32') {
+    tray.on('double-click', () => {
+      if (mainWindow) {
+        mainWindow.show();
+        if (process.platform === 'darwin') {
+          app.dock.show();
+        }
+        // Destroy tray icon when window is shown
+        destroyTrayIcon();
+      }
+    });
+  }
+  
+  // Click to show window (Windows)
+  if (process.platform === 'win32') {
+    tray.on('click', () => {
+      if (mainWindow) {
+        mainWindow.show();
+        // Destroy tray icon when window is shown
+        destroyTrayIcon();
+      }
+    });
+  }
+}
+
+// Helper function to destroy tray icon
+function destroyTrayIcon() {
+  if (tray) {
+    tray.destroy();
+    tray = null;
   }
 }
 
 // Helper function to close completely
 async function closeCompletely() {
   await gracefulShutdown();
+  destroyTrayIcon();
   mainWindow = null;
   app.quit();
 }
@@ -373,12 +471,27 @@ function setupRestartedDownloadHandlers(proc, downloadId, metadata, download) {
     proc.stdout.removeAllListeners('data');
     proc.stderr.removeAllListeners('data');
     
-    if (code === 0) {
+    // Check if download was paused - don't complete if paused
+    const db = await getDatabase();
+    const downloadStatus = db.prepare('SELECT status FROM downloads WHERE id = ?').get(downloadId);
+    
+    if (code === 0 && downloadStatus && downloadStatus.status !== 'paused') {
       playCompletionSound();
       await moveToHistory(downloadId);
+      notifyDownloadComplete(downloadId, code, download.output);
+    } else if (downloadStatus && downloadStatus.status === 'paused') {
+      // Download was paused - don't complete, just notify
+      if (mainWindow && !mainWindow.isDestroyed()) {
+        mainWindow.webContents.send('download-update', {
+          downloadId,
+          download_id: downloadId,
+          status: 'paused',
+        });
+      }
+    } else {
+      // Error or other non-zero exit
+      notifyDownloadComplete(downloadId, code, download.output);
     }
-    
-    notifyDownloadComplete(downloadId, code, download.output);
   });
   
   // Send initial state to renderer
@@ -561,6 +674,8 @@ function setDockIcon(isDev) {
         if (process.platform === 'darwin') {
           app.dock.show();
         }
+        // Destroy tray icon when window is shown
+        destroyTrayIcon();
       } else if (BrowserWindow.getAllWindows().length === 0) {
         createWindow();
       }
@@ -617,8 +732,12 @@ app.on('window-all-closed', () => {
     // Keep app running if background mode is enabled and there are active downloads
     if (backgroundMode && hasActiveDownloads) {
       // Don't quit - keep running in background
+      // Show dock/taskbar icon and create tray icon
       if (process.platform === 'darwin') {
-        app.dock.hide();
+        app.dock.show();
+      }
+      if (!tray) {
+        createTrayIcon();
       }
       return;
     }
@@ -930,6 +1049,30 @@ ipcMain.handle('start-download', async (event, { source, output, options }) => {
       }
     }
     
+    // If status is paused, update with pause reason and don't move to history
+    if (status.status === 'paused') {
+      const pausedMetadata = {
+        ...existingMetadata,
+        ...status,
+        pause_reason: status.pause_reason || status.message || 'Paused by user',
+        options: existingMetadata.options || {},
+      };
+      database.prepare('UPDATE downloads SET status = ?, metadata = ? WHERE id = ?').run(
+        'paused',
+        JSON.stringify(pausedMetadata),
+        downloadId
+      );
+      
+      // Send update to renderer
+      if (mainWindow && !mainWindow.isDestroyed()) {
+        mainWindow.webContents.send('download-update', {
+          ...updateData,
+          pause_reason: pausedMetadata.pause_reason,
+        });
+      }
+      return; // Don't process further - download is paused
+    }
+    
     const updatedMetadata = {
       ...existingMetadata,
       ...status,
@@ -1162,6 +1305,140 @@ ipcMain.handle('clear-download-history', async () => {
   const db = await getDatabase();
   db.prepare('DELETE FROM download_history').run();
   return { success: true };
+});
+
+ipcMain.handle('save-speed-test-result', async (event, result) => {
+  const db = await getDatabase();
+  const testId = `test_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+  
+  const insertTest = db.prepare(`
+    INSERT INTO speed_test_results (
+      id, timestamp, download_speed, upload_speed,
+      latency_avg, latency_min, latency_max,
+      location_city, location_region, location_country, location_isp
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+  `);
+  
+  insertTest.run(
+    testId,
+    result.timestamp || Date.now(),
+    result.downloadSpeed || 0,
+    result.uploadSpeed || 0,
+    result.latency?.average || null,
+    result.latency?.min || null,
+    result.latency?.max || null,
+    result.location?.city || null,
+    result.location?.region || null,
+    result.location?.country || null,
+    result.location?.isp || null
+  );
+  
+  return { success: true, testId };
+});
+
+ipcMain.handle('get-speed-test-results', async (event, limit = 100) => {
+  const db = await getDatabase();
+  const results = db.prepare(`
+    SELECT * FROM speed_test_results
+    ORDER BY timestamp DESC
+    LIMIT ?
+  `).all(limit);
+  
+  return results.map(row => ({
+    id: row.id,
+    timestamp: row.timestamp,
+    downloadSpeed: row.download_speed,
+    uploadSpeed: row.upload_speed,
+    latency: row.latency_avg ? {
+      average: row.latency_avg,
+      min: row.latency_min,
+      max: row.latency_max,
+    } : null,
+    location: row.location_city ? {
+      city: row.location_city,
+      region: row.location_region,
+      country: row.location_country,
+      isp: row.location_isp,
+    } : null,
+  }));
+});
+
+ipcMain.handle('clear-speed-test-results', async () => {
+  const db = await getDatabase();
+  db.prepare('DELETE FROM speed_test_results').run();
+  return { success: true };
+});
+
+ipcMain.handle('start-speed-test', async (event, { testType = 'full' }) => {
+  const goBinary = findGoBinary();
+  const args = ['--speedtest', '--test-type', testType];
+  
+  const proc = spawn(goBinary, args, {
+    cwd: path.join(__dirname, '..'),
+  });
+
+  const testId = `speedtest_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+  speedTestProcesses.set(testId, proc);
+
+  proc.stdout.on('data', (data) => {
+    const lines = data.toString().split('\n').filter(line => line.trim());
+    for (const line of lines) {
+      try {
+        const result = JSON.parse(line);
+        mainWindow.webContents.send('speed-test-update', {
+          testId,
+          ...result,
+        });
+      } catch (parseError) {
+        // Ignore non-JSON lines
+      }
+    }
+  });
+
+  proc.stderr.on('data', (data) => {
+    // Log errors but don't send to renderer
+    try {
+      console.error('Speed test error:', data.toString());
+    } catch (logError) {
+      // Ignore EPIPE errors
+    }
+  });
+
+  proc.on('close', (code) => {
+    speedTestProcesses.delete(testId);
+    mainWindow.webContents.send('speed-test-complete', {
+      testId,
+      code,
+    });
+  });
+
+  proc.on('error', (error) => {
+    speedTestProcesses.delete(testId);
+    mainWindow.webContents.send('speed-test-error', {
+      testId,
+      error: error.message,
+    });
+  });
+
+  return { testId, success: true };
+});
+
+ipcMain.handle('stop-speed-test', async (event, testId) => {
+  const proc = speedTestProcesses.get(testId);
+  if (proc) {
+    try {
+      if (process.platform === 'win32') {
+        proc.kill();
+      } else {
+        proc.kill('SIGTERM');
+      }
+      speedTestProcesses.delete(testId);
+      return { success: true };
+    } catch (error) {
+      return { success: false, error: error.message };
+    }
+  }
+  return { success: false, error: 'Test not found' };
 });
 
 ipcMain.handle('get-settings', async () => {

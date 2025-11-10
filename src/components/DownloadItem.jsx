@@ -129,6 +129,11 @@ export default function DownloadItem({ download }) {
             )}
           </div>
         )}
+        {download.status === 'paused' && download.pause_reason && (
+          <div className="mt-2 p-2 theme-bg-secondary rounded text-xs theme-text-secondary">
+            {download.pause_reason}
+          </div>
+        )}
       </div>
 
       {/* Stats */}

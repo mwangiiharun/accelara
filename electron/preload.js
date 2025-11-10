@@ -33,5 +33,25 @@ contextBridge.exposeInMainWorld('electronAPI', {
   onSystemThemeChange: (callback) => {
     ipcRenderer.on('system-theme-changed', (event, theme) => callback(theme));
   },
+  
+  saveSpeedTestResult: (result) => ipcRenderer.invoke('save-speed-test-result', result),
+  getSpeedTestResults: (limit) => ipcRenderer.invoke('get-speed-test-results', limit),
+  clearSpeedTestResults: () => ipcRenderer.invoke('clear-speed-test-results'),
+  startSpeedTest: (testType) => ipcRenderer.invoke('start-speed-test', { testType }),
+  stopSpeedTest: (testId) => ipcRenderer.invoke('stop-speed-test', testId),
+  onSpeedTestUpdate: (callback) => {
+    ipcRenderer.on('speed-test-update', (event, data) => callback(data));
+  },
+  onSpeedTestComplete: (callback) => {
+    ipcRenderer.on('speed-test-complete', (event, data) => callback(data));
+  },
+  onSpeedTestError: (callback) => {
+    ipcRenderer.on('speed-test-error', (event, data) => callback(data));
+  },
+  removeSpeedTestListeners: () => {
+    ipcRenderer.removeAllListeners('speed-test-update');
+    ipcRenderer.removeAllListeners('speed-test-complete');
+    ipcRenderer.removeAllListeners('speed-test-error');
+  },
 });
 
