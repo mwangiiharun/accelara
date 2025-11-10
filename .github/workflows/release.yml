@@ -74,9 +74,9 @@ jobs:
         run: |
           if [ "${{ matrix.platform }}" == "mac" ]; then
             if [ "${{ matrix.goarch }}" == "amd64" ]; then
-              npx electron-builder --mac dmg --x64 --publish never
+              npx electron-builder --mac --target dmg --x64 --publish never
             else
-              npx electron-builder --mac dmg --arm64 --publish never
+              npx electron-builder --mac --target dmg --arm64 --publish never
             fi
             # Wait a moment for DMG creation to complete
             sleep 10
