@@ -11,8 +11,8 @@ files:
   - "package.json"
   - "!node_modules/**"
   - "!**/*.md"
-  - "!**/test/**"
   - "!**/tests/**"
+  - "!**/test/**"
 
 extraResources:
   - from: "bin"
@@ -32,8 +32,8 @@ mac:
   identity: null
   hardenedRuntime: false
   gatekeeperAssess: false
-  entitlementsInherit: null
   notarize: false
+  entitlementsInherit: null
   protocols:
     - name: Magnet Link
       schemes:
