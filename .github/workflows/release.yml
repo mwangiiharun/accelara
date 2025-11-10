@@ -99,17 +99,38 @@ jobs:
                 if [ -f "$BIN_PATH/api-wrapper" ] || [ -f "$BIN_PATH/api-wrapper.exe" ]; then
                   echo "✓ api-wrapper binary found"
                 else
-                  echo "✗ api-wrapper binary NOT found!"
+                  echo "✗ api-wrapper binary NOT found - copying manually..."
+                  # Copy binaries manually if afterPack didn't run
+                  mkdir -p "$BIN_PATH"
+                  if [ -f "bin/api-wrapper" ]; then
+                    cp "bin/api-wrapper" "$BIN_PATH/api-wrapper"
+                    chmod +x "$BIN_PATH/api-wrapper"
+                    echo "✓ Copied api-wrapper manually"
+                  fi
                 fi
                 if [ -f "$BIN_PATH/clidm" ] || [ -f "$BIN_PATH/clidm.exe" ]; then
                   echo "✓ clidm binary found"
                 else
-                  echo "✗ clidm binary NOT found!"
+                  echo "✗ clidm binary NOT found - copying manually..."
+                  if [ -f "bin/clidm" ]; then
+                    cp "bin/clidm" "$BIN_PATH/clidm"
+                    chmod +x "$BIN_PATH/clidm"
+                    echo "✓ Copied clidm manually"
+                  fi
                 fi
               else
-                echo "✗ Bin directory NOT found at $BIN_PATH"
-                echo "Checking Resources directory:"
-                ls -la "$APP_BUNDLE/Contents/Resources/" 2>/dev/null || echo "Resources directory not accessible"
+                echo "✗ Bin directory NOT found - creating and copying binaries..."
+                mkdir -p "$BIN_PATH"
+                if [ -f "bin/api-wrapper" ]; then
+                  cp "bin/api-wrapper" "$BIN_PATH/api-wrapper"
+                  chmod +x "$BIN_PATH/api-wrapper"
+                  echo "✓ Created bin directory and copied api-wrapper"
+                fi
+                if [ -f "bin/clidm" ]; then
+                  cp "bin/clidm" "$BIN_PATH/clidm"
+                  chmod +x "$BIN_PATH/clidm"
+                  echo "✓ Copied clidm"
+                fi
               fi
               
               # Create ZIP file
