@@ -11,6 +11,7 @@ __pycache__/
 build/*
 !build/icon.icns
 !build/icon.ico
+!build/afterPack.js
 develop-eggs/
 dist/
 downloads/
@@ -72,6 +73,7 @@ dist/
 build/*
 !build/icon.icns
 !build/icon.ico
+!build/afterPack.js
 *.log
 downloads_history.json
 settings.json
