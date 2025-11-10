@@ -79,11 +79,9 @@ jobs:
             npx electron-builder --linux --x64 --publish never
           fi
 
-      - name: Find and Upload Artifact
-        id: find-artifact
+      - name: Build Electron app
         shell: bash
         run: |
-<<<<<<< HEAD
           if [ "${{ matrix.platform }}" == "mac" ]; then
             if [ "${{ matrix.goarch }}" == "amd64" ]; then
               npx electron-builder --mac dmg --x64 --publish never
