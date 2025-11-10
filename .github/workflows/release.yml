@@ -74,10 +74,13 @@ jobs:
         run: |
           if [ "${{ matrix.platform }}" == "mac" ]; then
             if [ "${{ matrix.goarch }}" == "amd64" ]; then
-              npx electron-builder --mac dmg --x64 --publish never
+              npx electron-builder --mac dmg --x64 --publish never 2>&1 | tee build.log
             else
-              npx electron-builder --mac dmg --arm64 --publish never
+              npx electron-builder --mac dmg --arm64 --publish never 2>&1 | tee build.log
             fi
+            echo "=== Build log ==="
+            cat build.log
+            echo "=== End build log ==="
             # Wait a moment for DMG creation to complete
             sleep 10
             # Verify DMG was created
@@ -89,6 +92,8 @@ jobs:
               find release -name "*.dmg" -type f 2>/dev/null || echo "No DMG files found"
               echo "Listing release directory:"
               ls -la release/ 2>/dev/null || echo "release/ not found"
+              echo "Checking for any errors in build log:"
+              grep -i "error\|fail\|dmg" build.log || echo "No relevant errors found"
             fi
           elif [ "${{ matrix.platform }}" == "win" ]; then
             npx electron-builder --win --x64 --publish never
