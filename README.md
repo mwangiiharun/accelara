@@ -38,7 +38,7 @@ Oh, and I also built a **fancy Electron GUI** because apparently typing commands
 
 ![ACCELARA Download Manager](screenshots/screenshot-1.png)
 
-*The ACCELARA GUI showing active downloads, real-time stats, speed graphs, and download history*
+*The ACCELARA GUIy*
 
 </div>
 
