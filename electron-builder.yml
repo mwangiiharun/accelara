@@ -4,7 +4,6 @@ productName: ACCELARA
 directories:
   output: release
   buildResources: build
-  app: .
 
 files:
   - "dist/**"
@@ -23,8 +22,6 @@ extraResources:
       - "clidm*"
 
 asar: true
-asarUnpack:
-  - "bin/**"
 
 mac:
   category: public.app-category.utilities
@@ -81,4 +78,4 @@ fileAssociations:
     description: BitTorrent file
     mimeType: application/x-bittorrent
 
-afterPack: build/afterPack.js
+afterPack: "./build/afterPack.js"
