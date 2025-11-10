@@ -161,11 +161,12 @@ jobs:
           if [ "${{ matrix.platform }}" == "mac" ]; then
             # Try multiple possible locations
             if [ -d "release" ]; then
-              # electron-builder outputs DMG files with the product name
-              # Try finding by pattern first, then by common names
-              ARTIFACT=$(find release -name "*.dmg" -type f 2>/dev/null | head -1 || true)
-              
-              # If pattern search fails, try common DMG names
+              # Try ZIP first (primary distribution method)
+              ARTIFACT=$(find release -name "ACCELARA*.zip" -type f 2>/dev/null | head -1 || true)
+              if [ -z "$ARTIFACT" ]; then
+                ARTIFACT=$(find release -name "*.zip" -type f 2>/dev/null | head -1 || true)
+              fi
+              # Fallback to DMG if ZIP not found
               if [ -z "$ARTIFACT" ]; then
                 ARTIFACT=$(find release -name "ACCELARA*.dmg" -type f 2>/dev/null | head -1 || true)
               fi
@@ -215,11 +216,11 @@ jobs:
             echo "Found app bundle: $APP_BUNDLE"
           fi
 
-      - name: Upload macOS DMG
+      - name: Upload macOS Artifact
         if: matrix.platform == 'mac' && steps.find-artifacts.outputs.artifact != ''
         uses: actions/upload-artifact@v4
         with:
-          name: accelara-${{ matrix.platform }}-${{ matrix.arch }}-dmg
+          name: accelara-${{ matrix.platform }}-${{ matrix.arch }}
           path: ${{ steps.find-artifacts.outputs.artifact }}
           retention-days: 30
 
