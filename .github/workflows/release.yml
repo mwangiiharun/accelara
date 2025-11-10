@@ -139,14 +139,79 @@ jobs:
           else
             echo "release directory does not exist"
           fi
-          echo "artifact=$ARTIFACT" >> $GITHUB_OUTPUT
-          echo "Found artifact: $ARTIFACT"
 
-      - name: Upload Artifact
+      - name: Find build artifacts
+        id: find-artifacts
+        shell: bash
+        run: |
+          set +e  # Don't exit on error
+          set +o pipefail  # Don't fail on pipe errors
+          ARTIFACT=""
+          APP_BUNDLE=""
+          
+          if [ "${{ matrix.platform }}" == "mac" ]; then
+            # Try multiple possible locations
+            if [ -d "release" ]; then
+              # electron-builder outputs DMG files with the product name
+              # Try finding by pattern first, then by common names
+              ARTIFACT=$(find release -name "${{ matrix.file_pattern }}" -type f 2>/dev/null | head -1 || true)
+              
+              # If pattern search fails, try common DMG names
+              if [ -z "$ARTIFACT" ]; then
+                ARTIFACT=$(find release -name "ACCELARA*.dmg" -type f 2>/dev/null | head -1 || true)
+              fi
+              if [ -z "$ARTIFACT" ]; then
+                ARTIFACT=$(find release -name "*.dmg" -type f 2>/dev/null | head -1 || true)
+              fi
+              
+              # Find app bundle
+              APP_BUNDLE=$(find release -name "ACCELARA.app" -type d 2>/dev/null | head -1 || true)
+              if [ -z "$APP_BUNDLE" ]; then
+                APP_BUNDLE=$(find release -name "*.app" -type d 2>/dev/null | head -1 || true)
+              fi
+              
+              # If still not found, try architecture-specific directories
+              if [ -z "$ARTIFACT" ] && [ "${{ matrix.goarch }}" == "arm64" ]; then
+                ARTIFACT=$(find release/mac-arm64 -name "*.dmg" -type f 2>/dev/null | head -1 || true)
+                APP_BUNDLE=$(find release/mac-arm64 -name "*.app" -type d 2>/dev/null | head -1 || true)
+              fi
+              if [ -z "$ARTIFACT" ] && [ "${{ matrix.goarch }}" == "amd64" ]; then
+                ARTIFACT=$(find release/mac -name "*.dmg" -type f 2>/dev/null | head -1 || true)
+                APP_BUNDLE=$(find release/mac -name "*.app" -type d 2>/dev/null | head -1 || true)
+              fi
+            fi
+            echo "artifact=$ARTIFACT" >> $GITHUB_OUTPUT
+            echo "app_bundle=$APP_BUNDLE" >> $GITHUB_OUTPUT
+          elif [ "${{ matrix.platform }}" == "win" ]; then
+            if [ -d "release" ]; then
+              ARTIFACT=$(find release -name "${{ matrix.file_pattern }}" -type f 2>/dev/null | head -1 || true)
+            fi
+            echo "artifact=$ARTIFACT" >> $GITHUB_OUTPUT
+            echo "app_bundle=" >> $GITHUB_OUTPUT
+          else
+            if [ -d "release" ]; then
+              ARTIFACT=$(find release -name "${{ matrix.file_pattern }}" -type f 2>/dev/null | head -1 || true)
+            fi
+            echo "artifact=$ARTIFACT" >> $GITHUB_OUTPUT
+            echo "app_bundle=" >> $GITHUB_OUTPUT
+          fi
+          
+          if [ -n "$ARTIFACT" ]; then
+            echo "Found artifact: $ARTIFACT"
+          else
+            echo "Warning: No artifact found for pattern ${{ matrix.file_pattern }}"
+          fi
+          
+          if [ -n "$APP_BUNDLE" ]; then
+            echo "Found app bundle: $APP_BUNDLE"
+          fi
+
+      - name: Upload macOS DMG
+        if: matrix.platform == 'mac' && steps.find-artifacts.outputs.artifact != ''
         uses: actions/upload-artifact@v4
         with:
-          name: accelara-${{ matrix.platform }}-${{ matrix.arch }}
-          path: ${{ steps.find-artifact.outputs.artifact }}
+          name: ${{ matrix.artifact_name }}-dmg
+          path: ${{ steps.find-artifacts.outputs.artifact }}
           retention-days: 30
 
   release:
