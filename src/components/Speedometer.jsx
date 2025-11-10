@@ -63,12 +63,8 @@ export default function Speedometer({ value, maxValue = 100, unit = 'Mbps', labe
     ctx.fillStyle = getComputedStyle(document.documentElement).getPropertyValue('--text-secondary').trim() || '#cbd5e1';
     ctx.fillText(unit, centerX, centerY - 5);
 
-    // Draw label (Bytes per second) - moved lower
-    if (label) {
-      ctx.font = '12px system-ui';
-      ctx.fillStyle = getComputedStyle(document.documentElement).getPropertyValue('--text-tertiary').trim() || '#94a3b8';
-      ctx.fillText(label, centerX, centerY + 35);
-    }
+    // Draw label (Bytes per second) - positioned below the canvas to avoid touching widget
+    // Label will be rendered outside the canvas in the component
   }, [value, maxValue, unit, label, color]);
 
   return (
@@ -79,6 +75,11 @@ export default function Speedometer({ value, maxValue = 100, unit = 'Mbps', labe
         height={140}
         className="block"
       />
+      {label && (
+        <p className="text-xs theme-text-tertiary mt-2 text-center">
+          {label}
+        </p>
+      )}
     </div>
   );
 }

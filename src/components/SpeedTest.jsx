@@ -15,6 +15,10 @@ export default function SpeedTest() {
   const [progress, setProgress] = useState(0);
   const [history, setHistory] = useState([]);
   const currentTestIdRef = useRef(null);
+  const downloadSpeedRef = useRef(0);
+  const uploadSpeedRef = useRef(0);
+  const latencyRef = useRef(null);
+  const googlePingRef = useRef(null);
 
   // Fetch location and load history on mount
   useEffect(() => {
@@ -26,15 +30,19 @@ export default function SpeedTest() {
       const handleUpdate = (data) => {
         if (data.type === 'latency' && data.latency) {
           setLatency(data.latency);
+          latencyRef.current = data.latency;
           if (data.latency.google_ping) {
             setGooglePing(data.latency.google_ping);
+            googlePingRef.current = data.latency.google_ping;
           }
           setTestType('latency');
         } else if (data.type === 'download' && data.download_speed !== undefined) {
           setDownloadSpeed(data.download_speed);
+          downloadSpeedRef.current = data.download_speed;
           setTestType('download');
         } else if (data.type === 'upload' && data.upload_speed !== undefined) {
           setUploadSpeed(data.upload_speed);
+          uploadSpeedRef.current = data.upload_speed;
           setTestType('upload');
         }
         if (data.progress !== undefined) {
@@ -46,7 +54,16 @@ export default function SpeedTest() {
         setIsRunning(false);
         setTestType(null);
         setProgress(100);
-        await saveResult();
+        // Use refs to get the latest values immediately
+        setTimeout(async () => {
+          await saveResultWithValues(
+            downloadSpeedRef.current,
+            uploadSpeedRef.current,
+            latencyRef.current,
+            googlePingRef.current
+          );
+          await loadHistory(); // Reload history to ensure charts are updated
+        }, 500);
       };
 
       const handleError = (data) => {
@@ -76,30 +93,40 @@ export default function SpeedTest() {
     }
   };
 
-  const saveResult = async () => {
-    if (globalThis.electronAPI && (downloadSpeed > 0 || uploadSpeed > 0 || latency)) {
+  const saveResultWithValues = async (dlSpeed, upSpeed, lat, gp) => {
+    if (globalThis.electronAPI) {
       try {
+        // Only save if we have meaningful results
+        const hasResults = dlSpeed > 0 || upSpeed > 0 || lat;
+        if (!hasResults) {
+          console.log('No results to save:', { dlSpeed, upSpeed, lat });
+          return;
+        }
+        
         // Include Google ping in latency data if available
-        const latencyData = latency ? {
-          average: latency.average,
-          min: latency.min,
-          max: latency.max,
-          googlePing: googlePing || latency.google_ping || latency.average,
+        const latencyData = lat ? {
+          average: lat.average,
+          min: lat.min,
+          max: lat.max,
+          googlePing: gp || lat.google_ping || lat.average,
         } : null;
         
-        await globalThis.electronAPI.saveSpeedTestResult({
+        const result = await globalThis.electronAPI.saveSpeedTestResult({
           timestamp: Date.now(),
-          downloadSpeed: downloadSpeed || 0,
-          uploadSpeed: uploadSpeed || 0,
+          downloadSpeed: dlSpeed || 0,
+          uploadSpeed: upSpeed || 0,
           latency: latencyData,
           location,
         });
-        // Reload history
-        await loadHistory();
+        console.log('Speed test result saved:', result);
       } catch (error) {
         console.error('Failed to save speed test result:', error);
       }
     }
+  };
+
+  const saveResult = async () => {
+    await saveResultWithValues(downloadSpeed, uploadSpeed, latency, googlePing);
   };
 
   const clearHistory = async () => {
@@ -273,14 +300,16 @@ export default function SpeedTest() {
                     {testType === 'latency' && 'Testing Latency...'}
                     {testType === 'download' && 'Testing Download Speed...'}
                     {testType === 'upload' && 'Testing Upload Speed...'}
-                    {testType === 'full' && 'Running Full Test...'}
+                    {(!testType || testType === 'full') && progress < 33 && 'Testing Latency...'}
+                    {(!testType || testType === 'full') && progress >= 33 && progress < 66 && 'Testing Download Speed...'}
+                    {(!testType || testType === 'full') && progress >= 66 && 'Testing Upload Speed...'}
                   </span>
                   <span className="theme-text-secondary">{Math.round(progress)}%</span>
                 </div>
                 <div className="w-full theme-bg-secondary rounded-full h-2 overflow-hidden">
                   <div
                     className="h-2 rounded-full transition-all bg-primary-500"
-                    style={{ width: `${progress}%`, maxWidth: '100%' }}
+                    style={{ width: `${Math.min(progress, 100)}%`, maxWidth: '100%' }}
                   />
                 </div>
               </div>
@@ -351,8 +380,8 @@ export default function SpeedTest() {
             </div>
           </div>
 
-          {/* Historical Charts */}
-          {history.length > 0 && (
+          {/* Historical Charts - Always show if history exists */}
+          {history.length > 0 ? (
             <div className="card mb-6">
               <div className="flex items-center justify-between mb-4">
                 <h3 className="text-lg font-semibold theme-text-primary">Test History ({history.length} tests)</h3>
@@ -402,6 +431,12 @@ export default function SpeedTest() {
                   />
                 </div>
               )}
+            </div>
+          ) : (
+            <div className="card mb-6">
+              <p className="text-sm theme-text-tertiary text-center py-4">
+                No test history yet. Run a speed test to see historical charts.
+              </p>
             </div>
           )}
         </div>
