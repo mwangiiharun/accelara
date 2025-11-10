@@ -25,6 +25,7 @@ mac:
   icon: build/icon.icns
   artifactName: "ACCELARA.${ext}"
   target:
+    - zip
     - dmg
   identity: null
   hardenedRuntime: false

@@ -75,35 +75,39 @@ jobs:
           if [ "${{ matrix.platform }}" == "mac" ]; then
             echo "=== Starting electron-builder ==="
             if [ "${{ matrix.goarch }}" == "amd64" ]; then
-              npx electron-builder --mac dmg --x64 --publish never 2>&1 | tee build.log || true
+              npx electron-builder --mac zip --x64 --publish never 2>&1 | tee build.log || true
             else
-              npx electron-builder --mac dmg --arm64 --publish never 2>&1 | tee build.log || true
+              npx electron-builder --mac zip --arm64 --publish never 2>&1 | tee build.log || true
             fi
             echo ""
-            echo "=== Full Build Log ==="
-            cat build.log || echo "No build log found"
-            echo "=== End Build Log ==="
-            echo ""
-            echo "=== Checking for DMG ==="
-            # Wait a moment for DMG creation to complete
-            sleep 5
-            # Check multiple possible locations
-            if [ -f "release/ACCELARA.dmg" ]; then
-              echo "✓ DMG found at release/ACCELARA.dmg"
-              ls -lh release/ACCELARA.dmg
-            elif [ -f "release/mac-arm64/ACCELARA.dmg" ]; then
-              echo "✓ DMG found at release/mac-arm64/ACCELARA.dmg"
-              ls -lh release/mac-arm64/ACCELARA.dmg
-            elif [ -f "release/mac/ACCELARA.dmg" ]; then
-              echo "✓ DMG found at release/mac/ACCELARA.dmg"
-              ls -lh release/mac/ACCELARA.dmg
+            echo "=== Checking for ZIP ==="
+            sleep 3
+            # Check for ZIP file (primary distribution method)
+            if [ -f "release/ACCELARA.zip" ]; then
+              echo "✓ ZIP found at release/ACCELARA.zip"
+              ls -lh release/ACCELARA.zip
+            elif [ -f "release/mac-arm64/ACCELARA.zip" ]; then
+              echo "✓ ZIP found at release/mac-arm64/ACCELARA.zip"
+              ls -lh release/mac-arm64/ACCELARA.zip
+            elif [ -f "release/mac/ACCELARA.zip" ]; then
+              echo "✓ ZIP found at release/mac/ACCELARA.zip"
+              ls -lh release/mac/ACCELARA.zip
             else
-              echo "✗ DMG not found in expected locations"
-              echo "Searching for any DMG files:"
-              find release -name "*.dmg" -type f 2>/dev/null || echo "No DMG files found anywhere"
-              echo ""
-              echo "Checking build log for DMG-related messages:"
-              grep -i "dmg\|building\|target" build.log || echo "No DMG-related messages in log"
+              echo "Searching for ZIP files:"
+              find release -name "*.zip" -type f 2>/dev/null || echo "No ZIP files found"
+            fi
+            # Also try to create DMG manually if ZIP works
+            echo ""
+            echo "=== Attempting manual DMG creation ==="
+            APP_BUNDLE=$(find release -name "ACCELARA.app" -type d 2>/dev/null | head -1)
+            if [ -n "$APP_BUNDLE" ] && [ -d "$APP_BUNDLE" ]; then
+              echo "Found app bundle: $APP_BUNDLE"
+              DMG_PATH="release/ACCELARA-${{ matrix.goarch }}.dmg"
+              hdiutil create -volname "ACCELARA" -srcfolder "$APP_BUNDLE" -ov -format UDZO "$DMG_PATH" 2>&1 || echo "DMG creation failed (non-critical)"
+              if [ -f "$DMG_PATH" ]; then
+                echo "✓ Manual DMG created: $DMG_PATH"
+                ls -lh "$DMG_PATH"
+              fi
             fi
           elif [ "${{ matrix.platform }}" == "win" ]; then
             npx electron-builder --win --x64 --publish never
