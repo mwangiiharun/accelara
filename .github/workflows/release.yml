@@ -133,44 +133,48 @@ jobs:
                 fi
               fi
               
-              # Create ZIP file
+              # Create ZIP file (optional - DMG is primary)
               ZIP_PATH="release/ACCELARA-mac-${{ matrix.goarch }}.zip"
               echo ""
-              echo "=== Creating ZIP ==="
+              echo "=== Creating ZIP (optional) ==="
               echo "ZIP path: $ZIP_PATH"
               APP_DIR="$(dirname "$APP_BUNDLE")"
               APP_NAME="$(basename "$APP_BUNDLE")"
               WORKSPACE_ROOT="$(pwd)"
-              cd "$APP_DIR" || exit 1
-              zip -r "$WORKSPACE_ROOT/$ZIP_PATH" "$APP_NAME" -q || {
+              set +e  # Don't fail on ZIP errors
+              cd "$APP_DIR" || true
+              zip -r "$WORKSPACE_ROOT/$ZIP_PATH" "$APP_NAME" -q 2>&1 || {
                 echo "ZIP creation failed, trying alternative method..."
-                cd "$WORKSPACE_ROOT"
-                ditto -c -k --keepParent "$APP_BUNDLE" "$ZIP_PATH" || echo "Alternative ZIP method also failed"
+                cd "$WORKSPACE_ROOT" || true
+                ditto -c -k --keepParent "$APP_BUNDLE" "$ZIP_PATH" 2>&1 || echo "Alternative ZIP method also failed (non-critical)"
               }
               ZIP_EXIT=$?
               cd "$WORKSPACE_ROOT" || true
+              set -e  # Re-enable error handling
               if [ -f "$ZIP_PATH" ]; then
                 echo "✓ ZIP created: $ZIP_PATH"
                 ls -lh "$ZIP_PATH"
               else
-                echo "⚠ ZIP creation failed (exit code: $ZIP_EXIT) - continuing with DMG only"
-                echo "Current directory: $(pwd)"
-                echo "App directory: $APP_DIR"
-                echo "Checking for ZIP files:"
-                find release -name "*.zip" -type f 2>/dev/null || echo "No ZIP files found"
+                echo "⚠ ZIP creation failed (non-critical - DMG is primary distribution format)"
+                echo "DMG was created successfully, which is the main distribution method"
               fi
               
-              # Create DMG file
+              # Create DMG file (primary distribution format)
               DMG_PATH="release/ACCELARA-mac-${{ matrix.goarch }}.dmg"
               echo ""
-              echo "=== Creating DMG ==="
+              echo "=== Creating DMG (primary) ==="
               echo "DMG path: $DMG_PATH"
-              hdiutil create -volname "ACCELARA" -srcfolder "$APP_BUNDLE" -ov -format UDZO "$DMG_PATH" 2>&1 || echo "DMG creation failed (non-critical)"
-              if [ -f "$DMG_PATH" ]; then
-                echo "✓ DMG created: $DMG_PATH"
+              set +e  # Don't fail on DMG errors
+              hdiutil create -volname "ACCELARA" -srcfolder "$APP_BUNDLE" -ov -format UDZO "$DMG_PATH" 2>&1
+              DMG_EXIT=$?
+              set -e  # Re-enable error handling
+              if [ $DMG_EXIT -eq 0 ] && [ -f "$DMG_PATH" ]; then
+                echo "✓ DMG created successfully: $DMG_PATH"
                 ls -lh "$DMG_PATH"
               else
-                echo "DMG creation failed or file not found"
+                echo "✗ DMG creation failed (exit code: $DMG_EXIT)"
+                echo "This is critical - DMG is the primary distribution format"
+                exit 1
               fi
             else
               echo "✗ App bundle not found!"
