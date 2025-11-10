@@ -154,7 +154,7 @@ jobs:
             if [ -d "release" ]; then
               # electron-builder outputs DMG files with the product name
               # Try finding by pattern first, then by common names
-              ARTIFACT=$(find release -name "${{ matrix.file_pattern }}" -type f 2>/dev/null | head -1 || true)
+              ARTIFACT=$(find release -name "*.dmg" -type f 2>/dev/null | head -1 || true)
               
               # If pattern search fails, try common DMG names
               if [ -z "$ARTIFACT" ]; then
@@ -184,13 +184,13 @@ jobs:
             echo "app_bundle=$APP_BUNDLE" >> $GITHUB_OUTPUT
           elif [ "${{ matrix.platform }}" == "win" ]; then
             if [ -d "release" ]; then
-              ARTIFACT=$(find release -name "${{ matrix.file_pattern }}" -type f 2>/dev/null | head -1 || true)
+              ARTIFACT=$(find release -name "*.exe" -type f 2>/dev/null | head -1 || true)
             fi
             echo "artifact=$ARTIFACT" >> $GITHUB_OUTPUT
             echo "app_bundle=" >> $GITHUB_OUTPUT
           else
             if [ -d "release" ]; then
-              ARTIFACT=$(find release -name "${{ matrix.file_pattern }}" -type f 2>/dev/null | head -1 || true)
+              ARTIFACT=$(find release -name "*.AppImage" -type f 2>/dev/null | head -1 || true)
             fi
             echo "artifact=$ARTIFACT" >> $GITHUB_OUTPUT
             echo "app_bundle=" >> $GITHUB_OUTPUT
