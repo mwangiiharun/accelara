@@ -727,7 +727,7 @@ Stack Overflow demands it, so here's what I used:
 - **Vite** - Build tool. Webpack is slow.
 - **Go** - Backend. Because I rewrote it in Go. Performance matters.
 - **net/http** - HTTP client. Standard library is awesome.
-- **anacrolix/torrent** - BitTorrent library. Pure Go, no C dependencies.
+- **anacrolix/torrent** - BitTorrent library. Pure Go (CGO disabled on Windows builds for compatibility).
 
 ---
 

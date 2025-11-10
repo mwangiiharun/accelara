@@ -89,14 +89,14 @@ jobs:
         run: |
           if [ "${{ matrix.platform }}" == "mac" ]; then
             if [ "${{ matrix.goarch }}" == "amd64" ]; then
-              npx electron-builder --mac --x64
+              npx electron-builder --mac --x64 --publish never
             else
-              npx electron-builder --mac --arm64
+              npx electron-builder --mac --arm64 --publish never
             fi
           elif [ "${{ matrix.platform }}" == "win" ]; then
-            npx electron-builder --win
+            npx electron-builder --win --publish never
           else
-            npx electron-builder --linux
+            npx electron-builder --linux --publish never
           fi
         env:
           ELECTRON_SKIP_BINARY_DOWNLOAD: 'false'
@@ -106,9 +106,16 @@ jobs:
         run: |
           echo "=== Build Output Structure ==="
           if [ -d "release" ]; then
-            find release -type f -name "*.dmg" -o -name "*.app" -o -name "*.exe" -o -name "*.AppImage" 2>/dev/null | head -20
+            echo "=== All DMG files ==="
+            find release -name "*.dmg" -type f 2>/dev/null || echo "No DMG files found"
             echo ""
-            echo "=== Release directory contents ==="
+            echo "=== All APP bundles ==="
+            find release -name "*.app" -type d 2>/dev/null || echo "No APP bundles found"
+            echo ""
+            echo "=== All files in release ==="
+            find release -type f 2>/dev/null | head -30
+            echo ""
+            echo "=== Release directory structure ==="
             ls -la release/ 2>/dev/null || echo "release/ not found"
             if [ -d "release/mac" ]; then
               echo "=== release/mac contents ==="
@@ -138,18 +145,31 @@ jobs:
           if [ "${{ matrix.platform }}" == "mac" ]; then
             # Try multiple possible locations
             if [ -d "release" ]; then
-              # Search in common electron-builder output locations
-              # electron-builder can output to: release/mac, release/mac-arm64, release/mac-x64, or just release/
+              # electron-builder outputs DMG files with the product name
+              # Try finding by pattern first, then by common names
               ARTIFACT=$(find release -name "${{ matrix.file_pattern }}" -type f 2>/dev/null | head -1 || true)
-              APP_BUNDLE=$(find release -name "*.app" -type d 2>/dev/null | head -1 || true)
+              
+              # If pattern search fails, try common DMG names
+              if [ -z "$ARTIFACT" ]; then
+                ARTIFACT=$(find release -name "ACCELARA*.dmg" -type f 2>/dev/null | head -1 || true)
+              fi
+              if [ -z "$ARTIFACT" ]; then
+                ARTIFACT=$(find release -name "*.dmg" -type f 2>/dev/null | head -1 || true)
+              fi
+              
+              # Find app bundle
+              APP_BUNDLE=$(find release -name "ACCELARA.app" -type d 2>/dev/null | head -1 || true)
+              if [ -z "$APP_BUNDLE" ]; then
+                APP_BUNDLE=$(find release -name "*.app" -type d 2>/dev/null | head -1 || true)
+              fi
               
               # If still not found, try architecture-specific directories
               if [ -z "$ARTIFACT" ] && [ "${{ matrix.goarch }}" == "arm64" ]; then
-                ARTIFACT=$(find release/mac-arm64 -name "${{ matrix.file_pattern }}" -type f 2>/dev/null | head -1 || true)
+                ARTIFACT=$(find release/mac-arm64 -name "*.dmg" -type f 2>/dev/null | head -1 || true)
                 APP_BUNDLE=$(find release/mac-arm64 -name "*.app" -type d 2>/dev/null | head -1 || true)
               fi
               if [ -z "$ARTIFACT" ] && [ "${{ matrix.goarch }}" == "amd64" ]; then
-                ARTIFACT=$(find release/mac -name "${{ matrix.file_pattern }}" -type f 2>/dev/null | head -1 || true)
+                ARTIFACT=$(find release/mac -name "*.dmg" -type f 2>/dev/null | head -1 || true)
                 APP_BUNDLE=$(find release/mac -name "*.app" -type d 2>/dev/null | head -1 || true)
               fi
             fi
@@ -179,6 +199,18 @@ jobs:
             echo "Found app bundle: $APP_BUNDLE"
           fi
 
+      - name: Debug artifact finding
+        if: matrix.platform == 'mac'
+        shell: bash
+        run: |
+          echo "Artifact found: '${{ steps.find-artifacts.outputs.artifact }}'"
+          echo "App bundle found: '${{ steps.find-artifacts.outputs.app_bundle }}'"
+          if [ -z "${{ steps.find-artifacts.outputs.artifact }}" ]; then
+            echo "WARNING: No DMG artifact found!"
+            echo "Searching manually..."
+            find release -name "*.dmg" -type f 2>/dev/null || echo "No DMG files found in release/"
+          fi
+      
       - name: Upload macOS DMG
         if: matrix.platform == 'mac' && steps.find-artifacts.outputs.artifact != ''
         uses: actions/upload-artifact@v4
