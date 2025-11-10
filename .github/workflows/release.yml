@@ -90,29 +90,61 @@ jobs:
             if [ -n "$APP_BUNDLE" ] && [ -d "$APP_BUNDLE" ]; then
               echo "Found app bundle: $APP_BUNDLE"
               
+              # Verify binaries are in place
+              echo "=== Verifying binaries ==="
+              BIN_PATH="$APP_BUNDLE/Contents/Resources/bin"
+              if [ -d "$BIN_PATH" ]; then
+                echo "Bin directory exists: $BIN_PATH"
+                ls -lh "$BIN_PATH" || echo "Could not list bin directory"
+                if [ -f "$BIN_PATH/api-wrapper" ] || [ -f "$BIN_PATH/api-wrapper.exe" ]; then
+                  echo "✓ api-wrapper binary found"
+                else
+                  echo "✗ api-wrapper binary NOT found!"
+                fi
+                if [ -f "$BIN_PATH/clidm" ] || [ -f "$BIN_PATH/clidm.exe" ]; then
+                  echo "✓ clidm binary found"
+                else
+                  echo "✗ clidm binary NOT found!"
+                fi
+              else
+                echo "✗ Bin directory NOT found at $BIN_PATH"
+                echo "Checking Resources directory:"
+                ls -la "$APP_BUNDLE/Contents/Resources/" 2>/dev/null || echo "Resources directory not accessible"
+              fi
+              
               # Create ZIP file
               ZIP_PATH="release/ACCELARA-mac-${{ matrix.goarch }}.zip"
-              echo "Creating ZIP: $ZIP_PATH"
+              echo ""
+              echo "=== Creating ZIP ==="
+              echo "ZIP path: $ZIP_PATH"
               APP_DIR="$(dirname "$APP_BUNDLE")"
               APP_NAME="$(basename "$APP_BUNDLE")"
-              cd "$APP_DIR"
-              zip -r "../ACCELARA-mac-${{ matrix.goarch }}.zip" "$APP_NAME" -q
+              cd "$APP_DIR" || exit 1
+              zip -r "$(pwd)/../ACCELARA-mac-${{ matrix.goarch }}.zip" "$APP_NAME" -q
+              ZIP_EXIT=$?
               cd - > /dev/null
-              if [ -f "$ZIP_PATH" ]; then
+              if [ $ZIP_EXIT -eq 0 ] && [ -f "$ZIP_PATH" ]; then
                 echo "✓ ZIP created: $ZIP_PATH"
                 ls -lh "$ZIP_PATH"
               else
-                echo "ZIP creation may have failed, checking..."
+                echo "✗ ZIP creation failed (exit code: $ZIP_EXIT)"
+                echo "Current directory: $(pwd)"
+                echo "App directory: $APP_DIR"
+                echo "Checking for ZIP files:"
                 find release -name "*.zip" -type f 2>/dev/null || echo "No ZIP files found"
               fi
               
               # Create DMG file
               DMG_PATH="release/ACCELARA-mac-${{ matrix.goarch }}.dmg"
-              echo "Creating DMG: $DMG_PATH"
+              echo ""
+              echo "=== Creating DMG ==="
+              echo "DMG path: $DMG_PATH"
               hdiutil create -volname "ACCELARA" -srcfolder "$APP_BUNDLE" -ov -format UDZO "$DMG_PATH" 2>&1 || echo "DMG creation failed (non-critical)"
               if [ -f "$DMG_PATH" ]; then
                 echo "✓ DMG created: $DMG_PATH"
                 ls -lh "$DMG_PATH"
+              else
+                echo "DMG creation failed or file not found"
               fi
             else
               echo "✗ App bundle not found!"
