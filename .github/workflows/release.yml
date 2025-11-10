@@ -73,41 +73,45 @@ jobs:
         shell: bash
         run: |
           if [ "${{ matrix.platform }}" == "mac" ]; then
-            echo "=== Starting electron-builder ==="
+            echo "=== Starting electron-builder (packaging only) ==="
             if [ "${{ matrix.goarch }}" == "amd64" ]; then
-              npx electron-builder --mac zip --x64 --publish never 2>&1 | tee build.log || true
+              npx electron-builder --mac --dir --x64 --publish never 2>&1 | tee build.log || true
             else
-              npx electron-builder --mac zip --arm64 --publish never 2>&1 | tee build.log || true
+              npx electron-builder --mac --dir --arm64 --publish never 2>&1 | tee build.log || true
             fi
             echo ""
-            echo "=== Checking for ZIP ==="
-            sleep 3
-            # Check for ZIP file (primary distribution method)
-            if [ -f "release/ACCELARA.zip" ]; then
-              echo "✓ ZIP found at release/ACCELARA.zip"
-              ls -lh release/ACCELARA.zip
-            elif [ -f "release/mac-arm64/ACCELARA.zip" ]; then
-              echo "✓ ZIP found at release/mac-arm64/ACCELARA.zip"
-              ls -lh release/mac-arm64/ACCELARA.zip
-            elif [ -f "release/mac/ACCELARA.zip" ]; then
-              echo "✓ ZIP found at release/mac/ACCELARA.zip"
-              ls -lh release/mac/ACCELARA.zip
-            else
-              echo "Searching for ZIP files:"
-              find release -name "*.zip" -type f 2>/dev/null || echo "No ZIP files found"
-            fi
-            # Also try to create DMG manually if ZIP works
-            echo ""
-            echo "=== Attempting manual DMG creation ==="
+            echo "=== Creating distribution files from app bundle ==="
+            # Find the app bundle
             APP_BUNDLE=$(find release -name "ACCELARA.app" -type d 2>/dev/null | head -1)
+            if [ -z "$APP_BUNDLE" ]; then
+              APP_BUNDLE=$(find release -name "*.app" -type d 2>/dev/null | head -1)
+            fi
+            
             if [ -n "$APP_BUNDLE" ] && [ -d "$APP_BUNDLE" ]; then
               echo "Found app bundle: $APP_BUNDLE"
-              DMG_PATH="release/ACCELARA-${{ matrix.goarch }}.dmg"
+              
+              # Create ZIP file
+              ZIP_PATH="release/ACCELARA-mac-${{ matrix.goarch }}.zip"
+              echo "Creating ZIP: $ZIP_PATH"
+              cd "$(dirname "$APP_BUNDLE")"
+              zip -r "$(basename "$ZIP_PATH")" "$(basename "$APP_BUNDLE")" -q
+              cd - > /dev/null
+              if [ -f "$ZIP_PATH" ]; then
+                echo "✓ ZIP created: $ZIP_PATH"
+                ls -lh "$ZIP_PATH"
+              fi
+              
+              # Create DMG file
+              DMG_PATH="release/ACCELARA-mac-${{ matrix.goarch }}.dmg"
+              echo "Creating DMG: $DMG_PATH"
               hdiutil create -volname "ACCELARA" -srcfolder "$APP_BUNDLE" -ov -format UDZO "$DMG_PATH" 2>&1 || echo "DMG creation failed (non-critical)"
               if [ -f "$DMG_PATH" ]; then
-                echo "✓ Manual DMG created: $DMG_PATH"
+                echo "✓ DMG created: $DMG_PATH"
                 ls -lh "$DMG_PATH"
               fi
+            else
+              echo "✗ App bundle not found!"
+              find release -name "*.app" -type d 2>/dev/null || echo "No app bundles found"
             fi
           elif [ "${{ matrix.platform }}" == "win" ]; then
             npx electron-builder --win --x64 --publish never
