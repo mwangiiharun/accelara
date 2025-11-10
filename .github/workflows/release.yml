@@ -119,10 +119,11 @@ jobs:
               echo "ZIP path: $ZIP_PATH"
               APP_DIR="$(dirname "$APP_BUNDLE")"
               APP_NAME="$(basename "$APP_BUNDLE")"
+              WORKSPACE_ROOT="$(pwd)"
               cd "$APP_DIR" || exit 1
-              zip -r "$(pwd)/../ACCELARA-mac-${{ matrix.goarch }}.zip" "$APP_NAME" -q
+              zip -r "$WORKSPACE_ROOT/$ZIP_PATH" "$APP_NAME" -q
               ZIP_EXIT=$?
-              cd - > /dev/null
+              cd "$WORKSPACE_ROOT" || true
               if [ $ZIP_EXIT -eq 0 ] && [ -f "$ZIP_PATH" ]; then
                 echo "✓ ZIP created: $ZIP_PATH"
                 ls -lh "$ZIP_PATH"
