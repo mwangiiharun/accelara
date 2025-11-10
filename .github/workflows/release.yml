@@ -70,16 +70,6 @@ jobs:
         run: npm run build:react
 
       - name: Build Electron App
-        run: |
-          if [ "${{ matrix.platform }}" = "mac" ]; then
-            npx electron-builder --mac dmg --${{ matrix.arch }} --publish never
-          elif [ "${{ matrix.platform }}" = "win" ]; then
-            npx electron-builder --win --x64 --publish never
-          else
-            npx electron-builder --linux --x64 --publish never
-          fi
-
-      - name: Build Electron app
         shell: bash
         run: |
           if [ "${{ matrix.platform }}" == "mac" ]; then
@@ -92,16 +82,16 @@ jobs:
             sleep 5
             # Verify DMG was created
             if [ -f "release/ACCELARA.dmg" ]; then
-              echo "✅ DMG created successfully: release/ACCELARA.dmg"
+              echo "DMG created successfully: release/ACCELARA.dmg"
               ls -lh release/ACCELARA.dmg
             else
-              echo "⚠️ DMG not found at release/ACCELARA.dmg, checking alternatives..."
+              echo "DMG not found at release/ACCELARA.dmg, checking alternatives..."
               find release -name "*.dmg" -type f 2>/dev/null || echo "No DMG files found"
             fi
           elif [ "${{ matrix.platform }}" == "win" ]; then
-            npx electron-builder --win --publish never
+            npx electron-builder --win --x64 --publish never
           else
-            npx electron-builder --linux --publish never
+            npx electron-builder --linux --x64 --publish never
           fi
         env:
           ELECTRON_SKIP_BINARY_DOWNLOAD: 'false'
@@ -197,7 +187,7 @@ jobs:
           if [ -n "$ARTIFACT" ]; then
             echo "Found artifact: $ARTIFACT"
           else
-            echo "Warning: No artifact found for pattern ${{ matrix.file_pattern }}"
+            echo "Warning: No artifact found"
           fi
           
           if [ -n "$APP_BUNDLE" ]; then
@@ -208,7 +198,7 @@ jobs:
         if: matrix.platform == 'mac' && steps.find-artifacts.outputs.artifact != ''
         uses: actions/upload-artifact@v4
         with:
-          name: ${{ matrix.artifact_name }}-dmg
+          name: accelara-${{ matrix.platform }}-${{ matrix.arch }}-dmg
           path: ${{ steps.find-artifacts.outputs.artifact }}
           retention-days: 30
 
