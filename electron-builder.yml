@@ -4,6 +4,7 @@ productName: ACCELARA
 directories:
   output: release
   buildResources: build
+  app: .
 
 files:
   - "dist/**"
