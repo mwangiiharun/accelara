@@ -89,9 +89,9 @@ jobs:
         run: |
           if [ "${{ matrix.platform }}" == "mac" ]; then
             if [ "${{ matrix.goarch }}" == "amd64" ]; then
-              npx electron-builder --mac --x64 --publish never
+              npx electron-builder --mac dmg --x64 --publish never
             else
-              npx electron-builder --mac --arm64 --publish never
+              npx electron-builder --mac dmg --arm64 --publish never
             fi
           elif [ "${{ matrix.platform }}" == "win" ]; then
             npx electron-builder --win --publish never
