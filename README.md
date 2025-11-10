@@ -680,24 +680,24 @@ If you see `go: command not found`, install Go:
 - **Linux**: `sudo apt install golang-go` (or your distro's package manager)
 - **Windows**: Download from https://golang.org/dl/
 
-### Build Errors (The "Something Went Wrong" Error)
+### Build Errors
 
 If you see build errors, make sure:
 - Go 1.21+ is installed (`go version`)
 - Dependencies are downloaded (`go mod download`)
 - You're in the project root directory
 
-### Port Already in Use (The "Something Else Is Using It" Error)
+### Port Already in Use 
 
 If you see port binding errors for BitTorrent, the Go torrent library will automatically try alternative ports. I'm helpful like that.
 
-### Resume Not Working (The "Did You Delete Something?" Error)
+### Resume Not Working 
 
 Make sure you're using the same output path and that the partial `.part.*` files haven't been deleted. I can't read your mind. Yet.
 
 ---
 
-## Project Structure (For People Who Care)
+## Project Structure
 
 ```
 accelara/
@@ -725,14 +725,14 @@ accelara/
 
 Stack Overflow demands it, so here's what I used:
 
-- **Electron** - Desktop app framework. Web tech everywhere.
-- **React** - UI framework. Components are cool.
+- **Electron** - Desktop app framework.
+- **React** - UI framework. 
 - **Tailwind CSS** - Styling. Writing CSS is hard.
-- **Recharts** - Chart library. Graphs are pretty.
-- **Lucide React** - Icons. Icons are icons.
+- **Recharts** - Chart library. 
+- **Lucide React** - Icons. 
 - **Vite** - Build tool. Webpack is slow.
-- **Go** - Backend. Because I rewrote it in Go. Performance matters.
-- **net/http** - HTTP client. Standard library is awesome.
+- **Go** - Backend.
+- **net/http** - HTTP client. 
 - **anacrolix/torrent** - BitTorrent library. Pure Go (CGO disabled on Windows builds for compatibility).
 
 ---
