@@ -1,6 +1,6 @@
 {
   "name": "accelara",
-  "version": "1.0.0",
+  "version": "2.1.1",
   "type": "commonjs",
   "description": "ACCELARA - Unified HTTP + BitTorrent CLI Download Manager with Electron GUI",
   "main": "electron/main.js",

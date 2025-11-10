@@ -535,9 +535,13 @@ Privacy matters:
 1. **Launch the app** (double-click, I know you can do it)
 2. **Click "New Download"** (it's the big button, you can't miss it)
 3. **Enter URL, magnet link, or torrent file path** (copy-paste is your friend)
-4. **Optionally set output path** (or let me guess, I'm pretty good at it)
-5. **Click "Start Download"** (the button that says "Start Download")
-6. **Watch the magic happen** (charts, progress bars, the whole shebang)
+4. **Preview download details** (see file name, size, and file list before starting - no surprises)
+5. **Optionally set output path** (or let me guess, I'm pretty good at it)
+6. **Click "Start Download"** (the button that says "Start Download")
+7. **Watch the magic happen** (charts, progress bars, the whole shebang)
+8. **Pause/Resume downloads** (because life happens, and sometimes you need to pause)
+9. **Run speed tests** (click the Speed Test tab and see how fast you really are)
+10. **View history** (completed downloads are saved, because you might need them later)
 
 ---
 
@@ -551,6 +555,7 @@ Pretty pictures sell, so here they are:
 - **Speed Graphs** - Watch your download speed spike and crash like a rollercoaster.
 - **Peers/Seeds Graphs** - Visualize your connection to the swarm. It's like social media, but for files.
 - **ETA & Progress** - Know exactly when your download will finish. Spoiler: it's always "soon".
+- **Tabbed Interface** - Separate tabs for All, HTTP, Torrents, and Speed Test. Organization is key.
 
 ### Download Type Icons
 
@@ -565,9 +570,10 @@ Pretty pictures sell, so here they are:
   - Concurrency (1-32 connections) - more is always better
   - Chunk size - bigger chunks = bigger problems, but faster downloads
   - Rate limits (download/upload) - bandwidth isn't free
-  - Theme (dark/light) - your eyes matter
+  - Theme (sync to OS, light, cyan) - your eyes matter, and dark mode is life
   - Sequential mode - for streaming when waiting is overrated
   - Timeouts and retries - servers are unreliable
+  - Keep seeding (torrents) - be a good citizen, share your bandwidth
 
 ### Live Stats - The Numbers That Matter
 
@@ -575,6 +581,16 @@ Pretty pictures sell, so here they are:
 - Upload rate chart (be a good citizen, share your bandwidth)
 - Peers count chart (more peers = more fun)
 - Seeds count chart (seeds are your friends)
+
+### Speed Test Tab - Because You Need to Know How Fast You Are
+
+- **Real-time Speedometers** - Watch animated gauges that actually move. It's like a car dashboard, but for your internet.
+- **Download Speed Test** - Test your download speed. Spoiler: it's probably slower than your ISP promised.
+- **Upload Speed Test** - Test your upload speed. Because uploading cat videos is important.
+- **Latency Test** - Ping multiple servers and see how fast your packets travel. Includes Google ping because Google knows everything.
+- **Location Detection** - Automatically detect your location (city, region, country, ISP). Privacy? What's that?
+- **Historical Charts** - Track your speed over time. Watch it get worse after your ISP "upgrades" your connection.
+- **Test History** - View past test results. Nostalgia for when your internet was actually fast.
 
 ---
 
