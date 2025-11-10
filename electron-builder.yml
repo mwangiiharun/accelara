@@ -4,7 +4,6 @@ productName: ACCELARA
 directories:
   output: release
   buildResources: build
-  app: .
 
 files:
   - "dist/**"
@@ -18,20 +17,19 @@ files:
 extraResources:
   - from: "bin"
     to: "bin"
-    filter:
-      - "api-wrapper*"
-      - "clidm*"
 
 asar: true
-asarUnpack:
-  - "bin/**"
 
 mac:
   category: public.app-category.utilities
   icon: build/icon.icns
-  artifactName: "ACCELARA-${arch}-${version}.${ext}"
+  artifactName: "ACCELARA.${ext}"
   target:
-    - dmg
+    - target: dmg
+      arch:
+        - arm64
+        - x64
+  identity: null
   hardenedRuntime: false
   gatekeeperAssess: false
   entitlementsInherit: null
@@ -45,10 +43,7 @@ win:
   icon: build/icon.ico
   target:
     - nsis
-  artifactName: "ACCELARA-${arch}-${version}.${ext}"
-  signingHashAlgorithms: null
-  certificateFile: null
-  certificatePassword: null
+  artifactName: "ACCELARA.${ext}"
   protocols:
     - name: Magnet Link
       schemes:
@@ -64,7 +59,7 @@ linux:
   icon: build/icon.png
   target:
     - AppImage
-  artifactName: "ACCELARA-${arch}-${version}.${ext}"
+  artifactName: "ACCELARA.${ext}"
   protocols:
     - name: Magnet Link
       schemes:
@@ -84,21 +79,4 @@ fileAssociations:
     description: BitTorrent file
     mimeType: application/x-bittorrent
 
-afterPack: |
-  const path = require("path");
-  const fs = require("fs");
-
-  module.exports = async function(context) {
-    const binPath = path.join(context.appOutDir, "bin");
-    if (fs.existsSync(binPath)) {
-      const files = fs.readdirSync(binPath);
-      for (const file of files) {
-        try {
-          fs.chmodSync(path.join(binPath, file), 0o755);
-          console.log("Set executable permission for", file);
-        } catch (err) {
-          console.warn("Failed to chmod binary:", file, err);
-        }
-      }
-    }
-  };
+afterPack: "./build/afterPack.js"
