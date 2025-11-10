@@ -93,12 +93,17 @@ jobs:
               # Create ZIP file
               ZIP_PATH="release/ACCELARA-mac-${{ matrix.goarch }}.zip"
               echo "Creating ZIP: $ZIP_PATH"
-              cd "$(dirname "$APP_BUNDLE")"
-              zip -r "$(basename "$ZIP_PATH")" "$(basename "$APP_BUNDLE")" -q
+              APP_DIR="$(dirname "$APP_BUNDLE")"
+              APP_NAME="$(basename "$APP_BUNDLE")"
+              cd "$APP_DIR"
+              zip -r "$ZIP_PATH" "$APP_NAME" -q
               cd - > /dev/null
               if [ -f "$ZIP_PATH" ]; then
                 echo "✓ ZIP created: $ZIP_PATH"
                 ls -lh "$ZIP_PATH"
+              else
+                echo "ZIP creation may have failed, checking..."
+                find release -name "*.zip" -type f 2>/dev/null || echo "No ZIP files found"
               fi
               
               # Create DMG file
