@@ -171,6 +171,7 @@ jobs:
               if [ $DMG_EXIT -eq 0 ] && [ -f "$DMG_PATH" ]; then
                 echo "✓ DMG created successfully: $DMG_PATH"
                 ls -lh "$DMG_PATH"
+                echo "✓ Build completed successfully"
               else
                 echo "✗ DMG creation failed (exit code: $DMG_EXIT)"
                 echo "This is critical - DMG is the primary distribution format"
@@ -179,6 +180,7 @@ jobs:
             else
               echo "✗ App bundle not found!"
               find release -name "*.app" -type d 2>/dev/null || echo "No app bundles found"
+              exit 1
             fi
           elif [ "${{ matrix.platform }}" == "win" ]; then
             npx electron-builder --win --x64 --publish never
@@ -191,6 +193,8 @@ jobs:
       - name: List build outputs
         shell: bash
         run: |
+          set +e  # Don't exit on error for this diagnostic step
+          set +o pipefail  # Don't fail on pipe errors
           echo "=== Build Output Structure ==="
           if [ -d "release" ]; then
             echo "=== All DMG files ==="
@@ -200,25 +204,26 @@ jobs:
             find release -name "*.app" -type d 2>/dev/null || echo "No APP bundles found"
             echo ""
             echo "=== All files in release ==="
-            find release -type f 2>/dev/null | head -30
+            (find release -type f 2>/dev/null | head -30) || echo "No files found"
             echo ""
             echo "=== Release directory structure ==="
             ls -la release/ 2>/dev/null || echo "release/ not found"
             if [ -d "release/mac" ]; then
               echo "=== release/mac contents ==="
-              ls -la release/mac/ 2>/dev/null
+              ls -la release/mac/ 2>/dev/null || true
             fi
             if [ -d "release/mac-arm64" ]; then
               echo "=== release/mac-arm64 contents ==="
-              ls -la release/mac-arm64/ 2>/dev/null
+              ls -la release/mac-arm64/ 2>/dev/null || true
             fi
             if [ -d "release/mac-x64" ]; then
               echo "=== release/mac-x64 contents ==="
-              ls -la release/mac-x64/ 2>/dev/null
+              ls -la release/mac-x64/ 2>/dev/null || true
             fi
           else
             echo "release directory does not exist"
           fi
+          exit 0  # Always succeed - this is a diagnostic step
 
       - name: Find build artifacts
         id: find-artifacts
@@ -232,17 +237,20 @@ jobs:
           if [ "${{ matrix.platform }}" == "mac" ]; then
             # Try multiple possible locations
             if [ -d "release" ]; then
-              # Try ZIP first (primary distribution method)
-              ARTIFACT=$(find release -name "ACCELARA*.zip" -type f 2>/dev/null | head -1 || true)
-              if [ -z "$ARTIFACT" ]; then
-                ARTIFACT=$(find release -name "*.zip" -type f 2>/dev/null | head -1 || true)
-              fi
-              # Fallback to DMG if ZIP not found
+              # DMG is primary distribution format for macOS
+              ARTIFACT=$(find release -name "ACCELARA-mac-${{ matrix.goarch }}.dmg" -type f 2>/dev/null | head -1 || true)
               if [ -z "$ARTIFACT" ]; then
                 ARTIFACT=$(find release -name "ACCELARA*.dmg" -type f 2>/dev/null | head -1 || true)
               fi
               if [ -z "$ARTIFACT" ]; then
                 ARTIFACT=$(find release -name "*.dmg" -type f 2>/dev/null | head -1 || true)
+              fi
+              # Fallback to ZIP if DMG not found
+              if [ -z "$ARTIFACT" ]; then
+                ARTIFACT=$(find release -name "ACCELARA*.zip" -type f 2>/dev/null | head -1 || true)
+              fi
+              if [ -z "$ARTIFACT" ]; then
+                ARTIFACT=$(find release -name "*.zip" -type f 2>/dev/null | head -1 || true)
               fi
               
               # Find app bundle
@@ -254,11 +262,15 @@ jobs:
               # If still not found, try architecture-specific directories
               if [ -z "$ARTIFACT" ] && [ "${{ matrix.goarch }}" == "arm64" ]; then
                 ARTIFACT=$(find release/mac-arm64 -name "*.dmg" -type f 2>/dev/null | head -1 || true)
-                APP_BUNDLE=$(find release/mac-arm64 -name "*.app" -type d 2>/dev/null | head -1 || true)
+                if [ -z "$APP_BUNDLE" ]; then
+                  APP_BUNDLE=$(find release/mac-arm64 -name "*.app" -type d 2>/dev/null | head -1 || true)
+                fi
               fi
               if [ -z "$ARTIFACT" ] && [ "${{ matrix.goarch }}" == "amd64" ]; then
                 ARTIFACT=$(find release/mac -name "*.dmg" -type f 2>/dev/null | head -1 || true)
-                APP_BUNDLE=$(find release/mac -name "*.app" -type d 2>/dev/null | head -1 || true)
+                if [ -z "$APP_BUNDLE" ]; then
+                  APP_BUNDLE=$(find release/mac -name "*.app" -type d 2>/dev/null | head -1 || true)
+                fi
               fi
             fi
             echo "artifact=$ARTIFACT" >> $GITHUB_OUTPUT
@@ -279,13 +291,19 @@ jobs:
           
           if [ -n "$ARTIFACT" ]; then
             echo "Found artifact: $ARTIFACT"
+            ls -lh "$ARTIFACT" || true
           else
             echo "Warning: No artifact found"
+            echo "Searching in release directory:"
+            find release -type f -name "*.dmg" -o -name "*.zip" -o -name "*.exe" -o -name "*.AppImage" 2>/dev/null | head -10 || true
           fi
           
           if [ -n "$APP_BUNDLE" ]; then
             echo "Found app bundle: $APP_BUNDLE"
           fi
+          
+          # Don't fail if artifact not found - let the upload step handle it
+          exit 0  # Always succeed - upload step will be skipped if no artifact
 
       - name: Upload macOS Artifact
         if: matrix.platform == 'mac' && steps.find-artifacts.outputs.artifact != ''
