@@ -277,13 +277,24 @@ jobs:
             echo "app_bundle=$APP_BUNDLE" >> $GITHUB_OUTPUT
           elif [ "${{ matrix.platform }}" == "win" ]; then
             if [ -d "release" ]; then
-              ARTIFACT=$(find release -name "*.exe" -type f 2>/dev/null | head -1 || true)
+              # Look for NSIS installer first
+              ARTIFACT=$(find release -name "ACCELARA-Installer-*.exe" -type f 2>/dev/null | head -1 || true)
+              if [ -z "$ARTIFACT" ]; then
+                ARTIFACT=$(find release -name "ACCELARA*.exe" -type f 2>/dev/null | head -1 || true)
+              fi
+              if [ -z "$ARTIFACT" ]; then
+                ARTIFACT=$(find release -name "*.exe" -type f 2>/dev/null | head -1 || true)
+              fi
             fi
             echo "artifact=$ARTIFACT" >> $GITHUB_OUTPUT
             echo "app_bundle=" >> $GITHUB_OUTPUT
           else
             if [ -d "release" ]; then
-              ARTIFACT=$(find release -name "*.AppImage" -type f 2>/dev/null | head -1 || true)
+              # Look for AppImage
+              ARTIFACT=$(find release -name "ACCELARA*.AppImage" -type f 2>/dev/null | head -1 || true)
+              if [ -z "$ARTIFACT" ]; then
+                ARTIFACT=$(find release -name "*.AppImage" -type f 2>/dev/null | head -1 || true)
+              fi
             fi
             echo "artifact=$ARTIFACT" >> $GITHUB_OUTPUT
             echo "app_bundle=" >> $GITHUB_OUTPUT
@@ -305,8 +316,8 @@ jobs:
           # Don't fail if artifact not found - let the upload step handle it
           exit 0  # Always succeed - upload step will be skipped if no artifact
 
-      - name: Upload macOS Artifact
-        if: matrix.platform == 'mac' && steps.find-artifacts.outputs.artifact != ''
+      - name: Upload Artifact
+        if: steps.find-artifacts.outputs.artifact != ''
         uses: actions/upload-artifact@v4
         with:
           name: accelara-${{ matrix.platform }}-${{ matrix.arch }}
@@ -342,17 +353,26 @@ jobs:
           # Copy all artifacts with proper naming
           for file in artifacts/accelara-*/*; do
             if [ -f "$file" ]; then
-              name=$(basename "$file")
               # Extract platform and arch from artifact folder name
               folder=$(basename $(dirname "$file"))
-              newname="ACCELARA-${folder#accelara-}.${name##*.}"
+              platform_arch="${folder#accelara-}"
+              
+              # Get file extension
+              ext="${file##*.}"
+              
+              # Create standardized name: ACCELARA-{platform}-{arch}.{ext}
+              newname="ACCELARA-${platform_arch}.${ext}"
               cp "$file" "release-assets/$newname"
+              echo "Copied: $(basename "$file") -> $newname"
             fi
           done
           
           # Create checksums
           cd release-assets
           find . -type f -exec sha256sum {} \; > SHA256SUMS.txt
+          echo ""
+          echo "Release assets:"
+          ls -lh
 
       - name: Publish GitHub Release
         uses: softprops/action-gh-release@v1
