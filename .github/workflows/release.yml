@@ -96,7 +96,7 @@ jobs:
               APP_DIR="$(dirname "$APP_BUNDLE")"
               APP_NAME="$(basename "$APP_BUNDLE")"
               cd "$APP_DIR"
-              zip -r "$(pwd)/../ACCELARA-mac-${{ matrix.goarch }}.zip" "$APP_NAME" -q || zip -r "../ACCELARA-mac-${{ matrix.goarch }}.zip" "$APP_NAME" -q
+              zip -r "../ACCELARA-mac-${{ matrix.goarch }}.zip" "$APP_NAME" -q
               cd - > /dev/null
               if [ -f "$ZIP_PATH" ]; then
                 echo "✓ ZIP created: $ZIP_PATH"
