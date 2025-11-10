@@ -75,14 +75,13 @@ Oh, and I also built a **fancy Electron GUI** because apparently typing commands
 
 ---
 
-## Installation (The Part Where You Actually Do Something)
-
-### Prerequisites (Things You Should Already Have)
+## Installation 
+### Prerequisites 
 
 - Python 3.7+ (if you don't have this, what are you even doing?)
 - pip (comes with Python, so you're good)
 
-### CLI Installation (The Simple Way)
+### CLI InstallatioN
 
 ```bash
 # Set up virtual environment (global installs are for masochists)
@@ -112,7 +111,7 @@ Now you can run it like a real program:
 
 ---
 
-## Electron GUI Installation (For People Who Don't Like Terminals)
+## Electron GUI Installation
 
 ### Prerequisites
 
@@ -259,7 +258,7 @@ I don't recommend this. But if you try it and it works, you're a legend.
 
 ---
 
-### Building for Linux (The "I Use Arch BTW" Edition)
+### Building for Linux
 
 Linux builds are... interesting. There are like 47 different package formats, and everyone has opinions. I've included AppImage because it's the "just works" option.
 
