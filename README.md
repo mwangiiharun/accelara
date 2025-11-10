@@ -32,6 +32,18 @@ Oh, and I also built a **fancy Electron GUI** because apparently typing commands
 
 ---
 
+## Screenshot
+
+<div align="center">
+
+![ACCELARA Download Manager](screenshots/screenshot-1.png)
+
+*The ACCELARA GUI showing active downloads, real-time stats, speed graphs, and download history*
+
+</div>
+
+---
+
 ## Features
 
 ### HTTP/HTTPS Downloads - The Boring But Necessary Part
@@ -746,6 +758,16 @@ MIT License - see [LICENSE](LICENSE) file for details. Basically, do whatever yo
 ## Contributing
 
 Contributions are welcome! Please feel free to submit a Pull Request. But please, for the love of all that is holy, write tests. I'm not an animal.
+
+---
+
+## Support
+
+If you find ACCELARA useful and want to support its development, consider buying me a coffee! ☕
+
+[![Buy Me A Coffee](https://img.shields.io/badge/Buy%20Me%20A%20Coffee-PayPal-orange?style=for-the-badge&logo=paypal)](https://www.paypal.com/ncp/payment/KPV3AUVU6BYT6)
+
+Your support helps keep this project alive and caffeinated. Every contribution, is greatly appreciated! 🙏
 
 ---
 
