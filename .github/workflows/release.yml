@@ -508,12 +508,30 @@ jobs:
                       echo "  Found existing .desktop file: $DESKTOP_FILE"
                     fi
                     
-                    # Check for icon
+                    # Check for icon and copy if needed
                     ICON_FILE=$(find "$UNPACKED_DIR" -name "*.png" -o -name "icon.png" -o -name "accelara.png" 2>/dev/null | head -1)
                     if [ -z "$ICON_FILE" ]; then
-                      echo "  Creating placeholder icon reference..."
-                      # Create a simple icon reference (appimagetool will handle missing icons)
-                      NEEDS_STRUCTURE=true
+                      echo "  Copying icon to AppDir..."
+                      # Try to find icon in build directory
+                      if [ -f "build/icon.png" ]; then
+                        cp "build/icon.png" "$UNPACKED_DIR/accelara.png"
+                        echo "  ✓ Copied build/icon.png to $UNPACKED_DIR/accelara.png"
+                        NEEDS_STRUCTURE=true
+                      elif [ -f "build/icon.icns" ]; then
+                        # Try to convert icns to png if ImageMagick is available
+                        if command -v convert &> /dev/null; then
+                          convert "build/icon.icns" "$UNPACKED_DIR/accelara.png" 2>/dev/null && {
+                            echo "  ✓ Converted build/icon.icns to $UNPACKED_DIR/accelara.png"
+                            NEEDS_STRUCTURE=true
+                          } || echo "  ⚠ Could not convert icon.icns to png"
+                        else
+                          echo "  ⚠ No icon.png found and ImageMagick not available for conversion"
+                        fi
+                      else
+                        echo "  ⚠ No icon file found in build/ directory"
+                      fi
+                    else
+                      echo "  ✓ Icon found: $ICON_FILE"
                     fi
                     
                     if [ "$NEEDS_STRUCTURE" = "true" ]; then
@@ -529,6 +547,17 @@ jobs:
                     # Verify .desktop file exists before creating AppImage
                     echo "  Verifying AppDir structure before creating AppImage..."
                     echo "  AppDir: $UNPACKED_DIR"
+                    # Re-check AppRun (it should exist if we created it)
+                    if [ ! -f "$UNPACKED_DIR/AppRun" ]; then
+                      echo "  ⚠ AppRun not found, recreating..."
+                      if [ -f "$UNPACKED_DIR/ACCELARA" ]; then
+                        echo '#!/bin/bash' > "$UNPACKED_DIR/AppRun"
+                        echo 'HERE="$(dirname "$(readlink -f "${0}")")"' >> "$UNPACKED_DIR/AppRun"
+                        echo 'exec "${HERE}/ACCELARA" "$@"' >> "$UNPACKED_DIR/AppRun"
+                        chmod +x "$UNPACKED_DIR/AppRun"
+                        echo "  ✓ AppRun recreated"
+                      fi
+                    fi
                     echo "  AppRun exists: $([ -f "$UNPACKED_DIR/AppRun" ] && echo 'yes' || echo 'no')"
                     echo "  .desktop files found:"
                     find "$UNPACKED_DIR" -name "*.desktop" -type f 2>/dev/null | while read -r f; do
