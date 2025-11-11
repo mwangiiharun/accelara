@@ -283,13 +283,21 @@ if (!fs.existsSync(asarPath)) {
       process.exit(1);
     }
     
-    // Use system asar directly (prefer /opt/homebrew/bin/asar or /usr/local/bin/asar)
-    let asarBinary = '/opt/homebrew/bin/asar';
-    if (!fs.existsSync(asarBinary)) {
-      asarBinary = '/usr/local/bin/asar';
-      if (!fs.existsSync(asarBinary)) {
-        // Fallback to npx
-        asarBinary = null;
+    // Try to find asar binary - prefer local node_modules, then system paths, then npx
+    let asarBinary = null;
+    const localAsar = path.join(projectDir, 'node_modules', '.bin', 'asar');
+    if (fs.existsSync(localAsar)) {
+      asarBinary = localAsar;
+      console.log('Using local asar from node_modules');
+    } else {
+      // Try system paths
+      const systemPaths = ['/opt/homebrew/bin/asar', '/usr/local/bin/asar'];
+      for (const sysPath of systemPaths) {
+        if (fs.existsSync(sysPath)) {
+          asarBinary = sysPath;
+          console.log('Using system asar:', sysPath);
+          break;
+        }
       }
     }
     
