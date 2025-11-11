@@ -11,7 +11,11 @@ files:
   - "electron/**"
   - "package.json"
   - "!node_modules/**"
-  - "node_modules/sql.js/**"
+  - "node_modules/sql.js/dist/sql-wasm.js"
+  - "node_modules/sql.js/dist/sql-wasm.wasm"
+  - "!node_modules/sql.js/dist/*debug*"
+  - "!node_modules/sql.js/dist/*.zip"
+  - "!node_modules/sql.js/dist/*.map"
   - "!**/*.md"
   - "!**/tests/**"
   - "!**/test/**"
@@ -24,8 +28,6 @@ extraResources:
 
 asar: true
 asarUnpack:
-  - "**/node_modules/sql.js/**"
-  - "**/node_modules/sql.js/dist/**"
   - "**/node_modules/sql.js/dist/sql-wasm.wasm"
   - "**/node_modules/sql.js/dist/sql-wasm.js"
 

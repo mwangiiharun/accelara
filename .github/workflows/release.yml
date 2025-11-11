@@ -60,8 +60,21 @@ jobs:
           CGO_ENABLED: ${{ matrix.goos == 'windows' && '0' || '1' }}
         run: |
           mkdir -p bin
-          go build -ldflags="-s -w" -o bin/api-wrapper${{ matrix.goos == 'windows' && '.exe' || '' }} ./cmd/api-wrapper
-          go build -ldflags="-s -w" -o bin/clidm${{ matrix.goos == 'windows' && '.exe' || '' }} ./cmd/clidm
+          go build -ldflags="-s -w" -trimpath -o bin/api-wrapper${{ matrix.goos == 'windows' && '.exe' || '' }} ./cmd/api-wrapper
+          go build -ldflags="-s -w" -trimpath -o bin/clidm${{ matrix.goos == 'windows' && '.exe' || '' }} ./cmd/clidm
+          # Strip binaries on Unix-like systems to further reduce size
+          if [ "${{ matrix.goos }}" != "windows" ]; then
+            if command -v strip &> /dev/null; then
+              echo "Stripping binaries..."
+              strip bin/api-wrapper${{ matrix.goos == 'windows' && '.exe' || '' }} 2>/dev/null || echo "strip failed, continuing..."
+              strip bin/clidm${{ matrix.goos == 'windows' && '.exe' || '' }} 2>/dev/null || echo "strip failed, continuing..."
+              echo "✓ Binaries optimized"
+            else
+              echo "⚠ strip not available, skipping"
+            fi
+          fi
+          echo "Binary sizes:"
+          ls -lh bin/ || true
 
       - name: Install Node Deps
         run: npm ci
@@ -75,27 +88,44 @@ jobs:
           echo "=== Verifying Linux build prerequisites ==="
           echo "Checking for icon file:"
           if [ ! -f "build/icon.png" ]; then
-            echo "Warning: icon.png not found, creating placeholder from icon.icns"
-            # Try to convert from icns if available, or create a simple placeholder
-            if command -v sips &> /dev/null; then
-              # macOS: use sips to convert
-              sips -s format png build/icon.icns --out build/icon.png 2>/dev/null || echo "Conversion failed"
-            elif command -v convert &> /dev/null; then
+            echo "Warning: icon.png not found, attempting to create from icon.icns"
+            # Try to convert from icns if available
+            if command -v convert &> /dev/null; then
               # Linux: use ImageMagick to convert
-              convert build/icon.icns build/icon.png 2>/dev/null || echo "Conversion failed"
+              convert build/icon.icns build/icon.png 2>/dev/null && echo "✓ Converted icon.icns to icon.png" || echo "⚠ Conversion failed - electron-builder will use default icon"
             else
-              echo "No conversion tool available, electron-builder will use default icon"
+              echo "⚠ ImageMagick not available - installing for icon conversion"
+              sudo apt-get update -qq && sudo apt-get install -y imagemagick 2>/dev/null || echo "⚠ Could not install ImageMagick"
+              if command -v convert &> /dev/null; then
+                convert build/icon.icns build/icon.png 2>/dev/null && echo "✓ Converted icon.icns to icon.png" || echo "⚠ Conversion failed"
+              else
+                echo "⚠ No conversion tool available, electron-builder will use default icon"
+              fi
             fi
           else
-            echo "icon.png found"
+            echo "✓ icon.png found"
             ls -la build/icon.png
           fi
           echo ""
           echo "Checking for Go binaries:"
-          ls -la bin/api-wrapper bin/clidm || echo "Warning: Go binaries not found"
+          if [ -f "bin/api-wrapper" ] && [ -f "bin/clidm" ]; then
+            echo "✓ Go binaries found"
+            ls -lh bin/api-wrapper bin/clidm
+            chmod +x bin/api-wrapper bin/clidm || true
+          else
+            echo "✗ ERROR: Go binaries not found!"
+            ls -la bin/ || echo "bin/ directory does not exist"
+            exit 1
+          fi
           echo ""
           echo "Checking for dist directory:"
-          ls -la dist/ | head -5 || echo "Warning: dist directory not found"
+          if [ -d "dist" ]; then
+            echo "✓ dist directory found"
+            ls -la dist/ | head -5
+          else
+            echo "✗ ERROR: dist directory not found!"
+            exit 1
+          fi
 
       - name: Build Electron App
         shell: bash
@@ -282,15 +312,35 @@ jobs:
             echo "=== Building Linux AppImage ==="
             # Check if icon exists, if not, electron-builder will use default
             if [ ! -f "build/icon.png" ]; then
-              echo "Warning: build/icon.png not found, electron-builder will use default icon"
+              echo "⚠ Warning: build/icon.png not found, electron-builder will use default icon"
             fi
-            npx electron-builder --linux --x64 --publish never 2>&1 | tee build.log || {
-              echo "Build command exited with error, checking logs..."
+            
+            # Verify prerequisites before building
+            if [ ! -f "bin/api-wrapper" ]; then
+              echo "✗ ERROR: api-wrapper binary not found!"
+              exit 1
+            fi
+            if [ ! -d "dist" ]; then
+              echo "✗ ERROR: dist directory not found!"
+              exit 1
+            fi
+            
+            echo "Running electron-builder for Linux..."
+            if npx electron-builder --linux --x64 --publish never 2>&1 | tee build.log; then
+              echo "✓ electron-builder completed successfully"
+            else
+              BUILD_EXIT_CODE=$?
+              echo "✗ electron-builder failed with exit code: $BUILD_EXIT_CODE"
+              echo ""
+              echo "=== Build log (last 100 lines) ==="
               if [ -f "build.log" ]; then
-                tail -50 build.log
+                tail -100 build.log
               fi
-              echo "Continuing to check for artifacts..."
-            }
+              echo ""
+              echo "=== Checking for partial build artifacts ==="
+              find release -type f 2>/dev/null | head -20 || echo "No artifacts found"
+              exit $BUILD_EXIT_CODE
+            fi
             echo ""
             echo "=== Linux build output ==="
             if [ -d "release" ]; then
@@ -298,17 +348,105 @@ jobs:
               find release -type f 2>/dev/null | head -20 || echo "No files found"
               echo ""
               echo "AppImage files:"
-              find release -name "*.AppImage" -type f 2>/dev/null || echo "No .AppImage files found"
+              APPIMAGE_COUNT=$(find release -name "*.AppImage" -type f 2>/dev/null | wc -l)
+              if [ "$APPIMAGE_COUNT" -gt 0 ]; then
+                echo "✓ Found $APPIMAGE_COUNT AppImage file(s):"
+                find release -name "*.AppImage" -type f 2>/dev/null | while read -r img; do
+                  echo "  - $img ($(du -h "$img" | cut -f1))"
+                done
+              else
+                echo "✗ ERROR: No AppImage files found!"
+                echo "  Searching in release directory:"
+                find release -type f 2>/dev/null | head -20
+                echo ""
+                echo "  Checking build.log for errors:"
+                if [ -f "build.log" ]; then
+                  echo "  === Last 50 lines of build.log ==="
+                  tail -50 build.log
+                  echo ""
+                  echo "  === Errors in build.log ==="
+                  grep -i "error\|fail" build.log | tail -20 || echo "  No obvious errors found"
+                fi
+                exit 1
+              fi
               echo ""
               echo "ACCELARA files:"
               find release -name "ACCELARA*" -type f 2>/dev/null || echo "No ACCELARA files found"
               echo ""
-              echo "Checking build.log for errors:"
+              echo "Checking build.log for warnings:"
               if [ -f "build.log" ]; then
-                grep -i "error\|fail" build.log | tail -10 || echo "No errors found in log"
+                grep -i "warn" build.log | tail -10 || echo "No warnings found"
               fi
             else
-              echo "Release directory does not exist!"
+              echo "✗ ERROR: Release directory does not exist!"
+              echo "  This means electron-builder did not create any output"
+              if [ -f "build.log" ]; then
+                echo "  === Last 100 lines of build.log ==="
+                tail -100 build.log
+              fi
+              exit 1
+            fi
+            
+            # Verify binary in AppImage (Linux)
+            echo ""
+            echo "=== Linux Binary Verification ==="
+            APPIMAGE=$(find release -name "*.AppImage" -type f 2>/dev/null | head -1 || true)
+            if [ -n "$APPIMAGE" ]; then
+              echo "Found AppImage: $APPIMAGE"
+              
+              # Make AppImage executable if not already
+              chmod +x "$APPIMAGE" || true
+              
+              # Extract AppImage to verify binary (AppImages are squashfs files)
+              EXTRACT_DIR="/tmp/accelara_appimage_extract_$$"
+              mkdir -p "$EXTRACT_DIR"
+              
+              # Try to extract AppImage (requires unsquashfs or AppImage tools)
+              if command -v unsquashfs &> /dev/null; then
+                echo "Extracting AppImage to verify binary..."
+                unsquashfs -d "$EXTRACT_DIR" "$APPIMAGE" resources/bin/api-wrapper 2>/dev/null || {
+                  # Try extracting entire AppImage
+                  unsquashfs -d "$EXTRACT_DIR" "$APPIMAGE" 2>/dev/null || echo "Could not extract AppImage"
+                }
+                
+                # Check for binary in extracted location
+                BIN_PATHS=(
+                  "$EXTRACT_DIR/resources/bin/api-wrapper"
+                  "$EXTRACT_DIR/bin/api-wrapper"
+                  "$EXTRACT_DIR/usr/bin/api-wrapper"
+                )
+                
+                BIN_FOUND=false
+                for BIN_PATH in "${BIN_PATHS[@]}"; do
+                  if [ -f "$BIN_PATH" ]; then
+                    echo "✓ Binary found in AppImage at: $BIN_PATH"
+                    ls -lh "$BIN_PATH"
+                    if [ -x "$BIN_PATH" ]; then
+                      echo "✓ Binary is executable in AppImage"
+                      BIN_FOUND=true
+                      break
+                    else
+                      echo "⚠ Warning: Binary not executable in AppImage"
+                    fi
+                  fi
+                done
+                
+                if [ "$BIN_FOUND" = false ]; then
+                  echo "⚠ Could not verify binary in AppImage (extraction may have failed)"
+                  echo "  This is non-critical - binary should still be included by electron-builder"
+                fi
+                
+                # Clean up
+                rm -rf "$EXTRACT_DIR"
+              else
+                echo "⚠ unsquashfs not available - skipping AppImage binary verification"
+                echo "  Binary should still be included by electron-builder's afterPack hook"
+                echo "  Verifying AppImage exists and is executable:"
+                ls -lh "$APPIMAGE"
+                test -x "$APPIMAGE" && echo "✓ AppImage is executable" || echo "⚠ AppImage is not executable"
+              fi
+            else
+              echo "⚠ AppImage not found - cannot verify binary"
             fi
           fi
         env:

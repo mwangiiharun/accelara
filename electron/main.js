@@ -553,10 +553,18 @@ async function reattachToDownloads() {
           const options = metadata.options || {};
           
           const args = buildCommandArgs(download.source, download.output, download.id, options);
-          const goBinary = findGoBinary();
+          const goBinary = verifyAndNormalizeBinary(findGoBinary());
+          
+          // For cwd, we need a real directory, not inside ASAR
+          let workingDir;
+          if (app.isPackaged) {
+            workingDir = os.homedir();
+          } else {
+            workingDir = path.join(__dirname, '..');
+          }
           
           const proc = spawn(goBinary, args, {
-            cwd: path.join(__dirname, '..'),
+            cwd: workingDir,
             env: { ...process.env }
           });
           
@@ -796,16 +804,54 @@ if (process.defaultApp) {
 // IPC Handlers
 ipcMain.handle('inspect-torrent', async (event, source) => {
   const { spawn } = require('node:child_process');
-  const goBinary = path.resolve(__dirname, '../bin/api-wrapper' + (process.platform === 'win32' ? '.exe' : ''));
+  console.log('=== inspect-torrent: Starting ===');
+  console.log('Source:', source);
   
-  if (!fs.existsSync(goBinary)) {
-    throw new Error('Go binary not found');
-  }
+  const foundBinary = findGoBinary();
+  console.log('findGoBinary() returned:', foundBinary);
+  
+  const goBinary = verifyAndNormalizeBinary(foundBinary);
+  console.log('verifyAndNormalizeBinary() returned:', goBinary);
+  console.log('About to spawn with path:', goBinary);
+  console.log('Path exists?', fs.existsSync(goBinary));
+  console.log('Path is file?', fs.existsSync(goBinary) ? fs.statSync(goBinary).isFile() : 'N/A');
+  console.log('Path is directory?', fs.existsSync(goBinary) ? fs.statSync(goBinary).isDirectory() : 'N/A');
 
   return new Promise((resolve, reject) => {
+    // For cwd, we need a real directory, not inside ASAR
+    // In packaged apps, use the user's home directory or a temp directory
+    let workingDir;
+    if (app.isPackaged) {
+      // In packaged app, use home directory or temp directory
+      workingDir = os.homedir();
+    } else {
+      // In dev, use project root
+      workingDir = path.join(__dirname, '..');
+    }
+    console.log('Working directory for spawn:', workingDir);
+    
+    console.log('Spawning process with:', goBinary, ['--inspect', '--source', source]);
     const proc = spawn(goBinary, ['--inspect', '--source', source], {
-      cwd: path.join(__dirname, '..'),
+      cwd: workingDir,
       env: { ...process.env }
+    });
+    
+    proc.on('error', (error) => {
+      console.error('=== spawn error ===');
+      console.error('Error code:', error.code);
+      console.error('Error message:', error.message);
+      console.error('Binary path used:', goBinary);
+      console.error('Path exists?', fs.existsSync(goBinary));
+      if (fs.existsSync(goBinary)) {
+        const stats = fs.statSync(goBinary);
+        console.error('Path stats:', {
+          isFile: stats.isFile(),
+          isDirectory: stats.isDirectory(),
+          mode: stats.mode.toString(8),
+          size: stats.size
+        });
+      }
+      reject(error);
     });
 
     let stdout = '';
@@ -840,15 +886,19 @@ ipcMain.handle('inspect-torrent', async (event, source) => {
 
 ipcMain.handle('get-http-info', async (event, source) => {
   const { spawn } = require('node:child_process');
-  const goBinary = path.resolve(__dirname, '../bin/api-wrapper' + (process.platform === 'win32' ? '.exe' : ''));
-  
-  if (!fs.existsSync(goBinary)) {
-    throw new Error('Go binary not found');
-  }
+  const goBinary = verifyAndNormalizeBinary(findGoBinary());
 
   return new Promise((resolve, reject) => {
+    // For cwd, we need a real directory, not inside ASAR
+    let workingDir;
+    if (app.isPackaged) {
+      workingDir = os.homedir();
+    } else {
+      workingDir = path.join(__dirname, '..');
+    }
+    
     const proc = spawn(goBinary, ['--http-info', '--source', source], {
-      cwd: path.join(__dirname, '..'),
+      cwd: workingDir,
       env: { ...process.env }
     });
 
@@ -921,26 +971,110 @@ function findGoBinary() {
   possiblePaths.push(path.resolve(__dirname, '../bin', binaryName));
   
   // Production paths - try multiple variations
+  // In Electron, process.resourcesPath can point to either:
+  // 1. Resources directory: /path/to/ACCELARA.app/Contents/Resources
+  // 2. app.asar: /path/to/ACCELARA.app/Contents/Resources/app.asar
   if (process.resourcesPath) {
-    // Standard production path
-    possiblePaths.push(path.join(process.resourcesPath, 'bin', binaryName));
-    
-    // Alternative: if resourcesPath is app.asar, go up to Resources
+    // Check if resourcesPath points to app.asar (common in packaged apps)
     if (process.resourcesPath.includes('app.asar')) {
+      // If it points to app.asar, go up to the actual Resources directory
       const resourcesDir = path.dirname(process.resourcesPath);
       possiblePaths.push(path.join(resourcesDir, 'bin', binaryName));
+      console.log('process.resourcesPath points to app.asar, using Resources dir:', resourcesDir);
+    } else {
+      // Standard production path (resourcesPath is the Resources directory)
+      possiblePaths.push(path.join(process.resourcesPath, 'bin', binaryName));
     }
   }
   
-  // macOS-specific: use app.getPath('exe') to find app bundle
-  if (process.platform === 'darwin' && app && typeof app.getPath === 'function') {
+  // Platform-specific path detection using app.getPath('exe') (most reliable method)
+  // This works even when process.resourcesPath might be incorrect
+  if (app && typeof app.getPath === 'function') {
     try {
       const exePath = app.getPath('exe');
-      const resourcesDir = path.join(path.dirname(exePath), '..', 'Resources');
-      possiblePaths.push(path.join(resourcesDir, 'bin', binaryName));
-    } catch {
-      // Ignore errors
+      
+      if (process.platform === 'darwin') {
+        // macOS: exePath is /path/to/ACCELARA.app/Contents/MacOS/ACCELARA
+        // Go up to Contents, then into Resources
+        const contentsDir = path.dirname(path.dirname(exePath));
+        const resourcesDir = path.join(contentsDir, 'Resources');
+        const binPath = path.join(resourcesDir, 'bin', binaryName);
+        possiblePaths.unshift(binPath); // Add to front of list (highest priority)
+      } else if (process.platform === 'linux') {
+        // Linux: exePath might be in AppImage or regular installation
+        // For AppImage: exePath is the AppImage itself or a symlink
+        // For regular install: exePath is in the app directory
+        const exeDir = path.dirname(exePath);
+        
+        // Check if we're in an AppImage (AppImages are mounted at /tmp/.mount_*)
+        if (exePath.includes('.AppImage') || exeDir.includes('.AppImage') || exeDir.includes('/.mount_')) {
+          // AppImage structure: binary is in resources/bin relative to AppImage mount
+          // The resources are typically in the same directory as the executable
+          const resourcesDir = exeDir;
+          const binPath = path.join(resourcesDir, 'bin', binaryName);
+          possiblePaths.unshift(binPath);
+          
+          // Also try resources subdirectory (common AppImage structure)
+          const resourcesSubDir = path.join(exeDir, 'resources');
+          possiblePaths.unshift(path.join(resourcesSubDir, 'bin', binaryName));
+        } else {
+          // Regular Linux installation: try resources directory
+          const resourcesDir = path.join(exeDir, 'resources');
+          possiblePaths.unshift(path.join(resourcesDir, 'bin', binaryName));
+          
+          // Also try parent directory (if exe is in a subdirectory)
+          const parentDir = path.dirname(exeDir);
+          possiblePaths.unshift(path.join(parentDir, 'resources', 'bin', binaryName));
+        }
+      }
+      // Windows: process.resourcesPath should handle it (checked above)
+    } catch (err) {
+      if (app.isPackaged) {
+        console.warn('Failed to get exe path:', err.message);
+      }
     }
+  }
+  
+  // Fallback: try to derive from process.execPath (always available, works on all platforms)
+  try {
+    const execPath = process.execPath;
+    
+    if (process.platform === 'darwin') {
+      // macOS: execPath might be: /path/to/ACCELARA.app/Contents/MacOS/ACCELARA
+      if (execPath.includes('.app/Contents/MacOS/')) {
+        const contentsDir = path.dirname(path.dirname(execPath));
+        const resourcesDir = path.join(contentsDir, 'Resources');
+        const binPath = path.join(resourcesDir, 'bin', binaryName);
+        if (!possiblePaths.includes(binPath)) {
+          possiblePaths.unshift(binPath);
+        }
+      }
+    } else if (process.platform === 'linux') {
+      // Linux: execPath might be AppImage or regular executable
+      const execDir = path.dirname(execPath);
+      
+      if (execPath.includes('.AppImage') || execDir.includes('/.mount_')) {
+        // AppImage: resources are typically in the same directory
+        const binPath = path.join(execDir, 'bin', binaryName);
+        if (!possiblePaths.includes(binPath)) {
+          possiblePaths.unshift(binPath);
+        }
+        // Also try resources subdirectory (common AppImage structure)
+        const resourcesBinPath = path.join(execDir, 'resources', 'bin', binaryName);
+        if (!possiblePaths.includes(resourcesBinPath)) {
+          possiblePaths.unshift(resourcesBinPath);
+        }
+      } else {
+        // Regular Linux: try resources directory
+        const resourcesBinPath = path.join(execDir, 'resources', 'bin', binaryName);
+        if (!possiblePaths.includes(resourcesBinPath)) {
+          possiblePaths.unshift(resourcesBinPath);
+        }
+      }
+    }
+    // Windows: process.resourcesPath should handle it
+  } catch (err) {
+    // Ignore errors
   }
   
   // Also try app.getAppPath() for ASAR location
@@ -948,8 +1082,11 @@ function findGoBinary() {
     try {
       const appPath = app.getAppPath();
       if (appPath.includes('.asar')) {
-        const resourcesDir = path.dirname(appPath).replace('app.asar', '');
+        // appPath is something like /path/to/ACCELARA.app/Contents/Resources/app.asar
+        // We need to go up to Resources directory (dirname of app.asar)
+        const resourcesDir = path.dirname(appPath); // This gives us Resources directory
         possiblePaths.push(path.join(resourcesDir, 'bin', binaryName));
+        console.log('Using app.getAppPath() to find Resources:', resourcesDir);
       }
     } catch {
       // Ignore errors
@@ -998,6 +1135,20 @@ function findGoBinary() {
         
         // Verify it's actually a file (not a directory)
         const stats = fs.statSync(possiblePath);
+        if (stats.isDirectory()) {
+          console.warn('Path exists but is a directory (not a file):', possiblePath);
+          // If it's a directory, try to find the binary inside it
+          const binaryInDir = path.join(possiblePath, binaryName);
+          if (fs.existsSync(binaryInDir) && fs.statSync(binaryInDir).isFile()) {
+            console.log('✓ Found Go binary inside directory at:', binaryInDir);
+            if (app.isPackaged) {
+              const dirStats = fs.statSync(binaryInDir);
+              console.log('  File size:', (dirStats.size / 1024 / 1024).toFixed(2), 'MB');
+            }
+            return binaryInDir;
+          }
+          continue;
+        }
         if (!stats.isFile()) {
           console.warn('Path exists but is not a file:', possiblePath);
           continue;
@@ -1007,7 +1158,16 @@ function findGoBinary() {
         if (app.isPackaged) {
           console.log('  File size:', (stats.size / 1024 / 1024).toFixed(2), 'MB');
         }
-        return possiblePath;
+        // Return the absolute resolved path, ensuring it's a file path (not directory)
+        const resolvedPath = path.resolve(possiblePath);
+        // Double-check it's still a file after resolution
+        const resolvedStats = fs.statSync(resolvedPath);
+        if (!resolvedStats.isFile()) {
+          console.error('ERROR: Resolved path is not a file:', resolvedPath);
+          console.error('  isDirectory:', resolvedStats.isDirectory());
+          continue; // Try next path
+        }
+        return resolvedPath;
       }
     } catch (err) {
       // Continue to next path if this one fails
@@ -1062,6 +1222,89 @@ function findGoBinary() {
   throw new Error(`Go binary not found. Please ensure the binary is built and included in the app bundle.`);
 }
 
+/**
+ * Verifies and normalizes the Go binary path before spawning.
+ * Throws an error if the path is invalid, doesn't exist, or is not a file.
+ */
+function verifyAndNormalizeBinary(binaryPath) {
+  if (!binaryPath) {
+    throw new Error('Binary path is empty or undefined');
+  }
+  
+  // Log the original path for debugging
+  console.log('verifyAndNormalizeBinary: Original path:', binaryPath);
+  console.log('verifyAndNormalizeBinary: __dirname:', __dirname);
+  console.log('verifyAndNormalizeBinary: process.cwd():', process.cwd());
+  
+  // Normalize the path (resolve relative paths, remove trailing slashes, etc.)
+  // Use path.normalize first to clean up the path, then resolve
+  let normalizedPath = path.normalize(binaryPath);
+  
+  // If it's not absolute, resolve it relative to the current working directory
+  if (!path.isAbsolute(normalizedPath)) {
+    normalizedPath = path.resolve(process.cwd(), normalizedPath);
+  } else {
+    normalizedPath = path.resolve(normalizedPath);
+  }
+  
+  console.log('verifyAndNormalizeBinary: Normalized path:', normalizedPath);
+  
+  // Verify it exists first
+  if (!fs.existsSync(normalizedPath)) {
+    console.error('verifyAndNormalizeBinary: Path does not exist:', normalizedPath);
+    // Try to find what does exist at that location
+    const parentDir = path.dirname(normalizedPath);
+    if (fs.existsSync(parentDir)) {
+      console.error('verifyAndNormalizeBinary: Parent directory exists:', parentDir);
+      console.error('verifyAndNormalizeBinary: Contents of parent:', fs.readdirSync(parentDir));
+    }
+    throw new Error(`Binary not found at: ${normalizedPath}`);
+  }
+  
+  // Resolve any symlinks to get the actual file path
+  // This is important on macOS where paths might be symlinked
+  try {
+    normalizedPath = fs.realpathSync(normalizedPath);
+    console.log('verifyAndNormalizeBinary: Resolved real path:', normalizedPath);
+  } catch (err) {
+    // If realpathSync fails, use the original path
+    console.warn('verifyAndNormalizeBinary: Could not resolve real path, using original:', err.message);
+  }
+  
+  // Verify it's a file, not a directory
+  const stats = fs.statSync(normalizedPath);
+  console.log('verifyAndNormalizeBinary: Stats:', {
+    isFile: stats.isFile(),
+    isDirectory: stats.isDirectory(),
+    mode: stats.mode.toString(8),
+    size: stats.size
+  });
+  
+  if (stats.isDirectory()) {
+    console.error('verifyAndNormalizeBinary: Path is a directory, not a file!');
+    console.error('verifyAndNormalizeBinary: Directory contents:', fs.readdirSync(normalizedPath));
+    throw new Error(`Binary path is a directory, not a file: ${normalizedPath}`);
+  }
+  
+  if (!stats.isFile()) {
+    throw new Error(`Binary path is not a file (is directory?): ${normalizedPath}`);
+  }
+  
+  // Verify it's executable on Unix-like systems
+  if (process.platform !== 'win32') {
+    try {
+      fs.accessSync(normalizedPath, fs.constants.X_OK);
+      console.log('verifyAndNormalizeBinary: Binary is executable');
+    } catch (err) {
+      console.error('verifyAndNormalizeBinary: Binary is not executable:', err.message);
+      throw new Error(`Binary is not executable: ${normalizedPath}`);
+    }
+  }
+  
+  console.log('verifyAndNormalizeBinary: Successfully verified binary at:', normalizedPath);
+  return normalizedPath;
+}
+
 // Helper function to determine download type
 function determineDownloadType(source) {
   if (source.startsWith('magnet:') || source.endsWith('.torrent')) {
@@ -1102,7 +1345,20 @@ ipcMain.handle('start-download', async (event, { source, output, options }) => {
   }
   
   const args = buildCommandArgs(source, outputPath, downloadId, options);
-  const goBinary = findGoBinary();
+  
+  console.log('=== start-download: Starting ===');
+  console.log('Source:', source);
+  console.log('Output path:', outputPath);
+  
+  const foundBinary = findGoBinary();
+  console.log('findGoBinary() returned:', foundBinary);
+  
+  const goBinary = verifyAndNormalizeBinary(foundBinary);
+  console.log('verifyAndNormalizeBinary() returned:', goBinary);
+  console.log('About to spawn with path:', goBinary);
+  console.log('Path exists?', fs.existsSync(goBinary));
+  console.log('Path is file?', fs.existsSync(goBinary) ? fs.statSync(goBinary).isFile() : 'N/A');
+  console.log('Path is directory?', fs.existsSync(goBinary) ? fs.statSync(goBinary).isDirectory() : 'N/A');
   console.log('Using Go binary:', goBinary);
 
   // Determine download type and save to database
@@ -1121,9 +1377,36 @@ ipcMain.handle('start-download', async (event, { source, output, options }) => {
   `);
   insertDownload.run(downloadId, source, outputPath, downloadType, Date.now(), JSON.stringify(initialMetadata));
 
+  // For cwd, we need a real directory, not inside ASAR
+  let workingDir;
+  if (app.isPackaged) {
+    workingDir = os.homedir();
+  } else {
+    workingDir = path.join(__dirname, '..');
+  }
+  console.log('Working directory for spawn:', workingDir);
+  
+  console.log('Spawning process with:', goBinary, args);
   const proc = spawn(goBinary, args, {
-    cwd: path.join(__dirname, '..'),
+    cwd: workingDir,
     env: { ...process.env }
+  });
+  
+  proc.on('error', (error) => {
+    console.error('=== spawn error ===');
+    console.error('Error code:', error.code);
+    console.error('Error message:', error.message);
+    console.error('Binary path used:', goBinary);
+    console.error('Path exists?', fs.existsSync(goBinary));
+    if (fs.existsSync(goBinary)) {
+      const stats = fs.statSync(goBinary);
+      console.error('Path stats:', {
+        isFile: stats.isFile(),
+        isDirectory: stats.isDirectory(),
+        mode: stats.mode.toString(8),
+        size: stats.size
+      });
+    }
   });
 
   downloadProcesses.set(downloadId, proc);
@@ -1535,11 +1818,53 @@ ipcMain.handle('focus-window', () => {
 });
 
 ipcMain.handle('start-speed-test', async (event, { testType = 'full' }) => {
-  const goBinary = findGoBinary();
+  console.log('=== start-speed-test: Starting ===');
+  console.log('Test type:', testType);
+  
+  const foundBinary = findGoBinary();
+  console.log('findGoBinary() returned:', foundBinary);
+  
+  const goBinary = verifyAndNormalizeBinary(foundBinary);
+  console.log('verifyAndNormalizeBinary() returned:', goBinary);
+  console.log('About to spawn with path:', goBinary);
+  console.log('Path exists?', fs.existsSync(goBinary));
+  console.log('Path is file?', fs.existsSync(goBinary) ? fs.statSync(goBinary).isFile() : 'N/A');
+  console.log('Path is directory?', fs.existsSync(goBinary) ? fs.statSync(goBinary).isDirectory() : 'N/A');
+  
   const args = ['--speedtest', '--test-type', testType];
+  console.log('Spawning process with:', goBinary, args);
+  
+  // For cwd, we need a real directory, not inside ASAR
+  // In packaged apps, use the user's home directory or a temp directory
+  let workingDir;
+  if (app.isPackaged) {
+    // In packaged app, use home directory or temp directory
+    workingDir = os.homedir();
+  } else {
+    // In dev, use project root
+    workingDir = path.join(__dirname, '..');
+  }
+  console.log('Working directory for spawn:', workingDir);
   
   const proc = spawn(goBinary, args, {
-    cwd: path.join(__dirname, '..'),
+    cwd: workingDir,
+  });
+  
+  proc.on('error', (error) => {
+    console.error('=== spawn error ===');
+    console.error('Error code:', error.code);
+    console.error('Error message:', error.message);
+    console.error('Binary path used:', goBinary);
+    console.error('Path exists?', fs.existsSync(goBinary));
+    if (fs.existsSync(goBinary)) {
+      const stats = fs.statSync(goBinary);
+      console.error('Path stats:', {
+        isFile: stats.isFile(),
+        isDirectory: stats.isDirectory(),
+        mode: stats.mode.toString(8),
+        size: stats.size
+      });
+    }
   });
 
   const testId = `speedtest_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
