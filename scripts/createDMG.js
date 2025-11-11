@@ -286,9 +286,13 @@ if (!fs.existsSync(asarPath)) {
     // Try to find asar binary - prefer local node_modules, then system paths, then npx
     let asarBinary = null;
     const localAsar = path.join(projectDir, 'node_modules', '.bin', 'asar');
+    const localElectronAsar = path.join(projectDir, 'node_modules', '.bin', 'electron-asar');
     if (fs.existsSync(localAsar)) {
       asarBinary = localAsar;
       console.log('Using local asar from node_modules');
+    } else if (fs.existsSync(localElectronAsar)) {
+      asarBinary = localElectronAsar;
+      console.log('Using local @electron/asar from node_modules');
     } else {
       // Try system paths
       const systemPaths = ['/opt/homebrew/bin/asar', '/usr/local/bin/asar'];
@@ -303,7 +307,7 @@ if (!fs.existsSync(asarPath)) {
     
     const asarCommand = asarBinary 
       ? `"${asarBinary}" pack "${tempAppDir}" "${asarPath}"`
-      : `npx --yes asar pack "${tempAppDir}" "${asarPath}"`;
+      : `npx --yes @electron/asar pack "${tempAppDir}" "${asarPath}"`;
     
     console.log('Running:', asarCommand);
     console.log('Temp dir:', tempAppDir);
