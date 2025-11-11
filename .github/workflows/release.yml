@@ -456,15 +456,15 @@ jobs:
               if [ -n "$UNPACKED_DIR" ]; then
                 echo "  Found unpacked directory: $UNPACKED_DIR"
                 
-          # Try to use extracted appimagetool
-          APPIMAGETOOL_CMD=""
-          if [ -f "/tmp/squashfs-root/AppRun" ]; then
-          APPIMAGETOOL_CMD="/tmp/squashfs-root/AppRun"
-          elif [ -f "/tmp/squashfs-root/appimagetool" ]; then
-          APPIMAGETOOL_CMD="/tmp/squashfs-root/appimagetool"
-          elif command -v appimagetool &> /dev/null; then
-          APPIMAGETOOL_CMD="appimagetool"
-          fi
+                # Try to use extracted appimagetool
+                APPIMAGETOOL_CMD=""
+                if [ -f "/tmp/squashfs-root/AppRun" ]; then
+                  APPIMAGETOOL_CMD="/tmp/squashfs-root/AppRun"
+                elif [ -f "/tmp/squashfs-root/appimagetool" ]; then
+                  APPIMAGETOOL_CMD="/tmp/squashfs-root/appimagetool"
+                elif command -v appimagetool &> /dev/null; then
+                  APPIMAGETOOL_CMD="appimagetool"
+                fi
                 
                 if [ -n "$APPIMAGETOOL_CMD" ]; then
                   echo "  Creating AppImage manually using: $APPIMAGETOOL_CMD"
@@ -672,9 +672,9 @@ jobs:
               ls -lh "$APPIMAGE"
               test -x "$APPIMAGE" && echo "✓ AppImage is executable" || echo "⚠ AppImage is not executable"
             fi
-            else
-              echo "⚠ AppImage not found - cannot verify binary"
-            fi
+          else
+            echo "⚠ AppImage not found - cannot verify binary"
+          fi
         env:
           ELECTRON_SKIP_BINARY_DOWNLOAD: 'false'
       
