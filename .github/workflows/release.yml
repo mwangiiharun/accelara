@@ -82,7 +82,7 @@ jobs:
 
       - name: Build Frontend
         run: npm run build:react
-      
+
       - name: Install Linux build dependencies
         if: matrix.platform == 'linux'
         shell: bash
@@ -481,20 +481,39 @@ jobs:
                     fi
                     
                     # Check for .desktop file (required by appimagetool)
+                    # AppDir structure requires .desktop file at root or in usr/share/applications/
                     DESKTOP_FILE=$(find "$UNPACKED_DIR" -name "*.desktop" -type f 2>/dev/null | head -1)
                     if [ -z "$DESKTOP_FILE" ]; then
                       echo "  Creating .desktop file..."
+                      # Try root first (AppDir standard)
                       DESKTOP_FILE="$UNPACKED_DIR/accelara.desktop"
-                      cat > "$DESKTOP_FILE" << 'EOF'
-[Desktop Entry]
+                      # Also create in usr/share/applications/ (standard Linux location)
+                      mkdir -p "$UNPACKED_DIR/usr/share/applications"
+                      DESKTOP_FILE_ALT="$UNPACKED_DIR/usr/share/applications/accelara.desktop"
+                      
+                      # Find the actual executable name
+                      EXEC_NAME="ACCELARA"
+                      if [ -f "$UNPACKED_DIR/ACCELARA" ]; then
+                        EXEC_NAME="ACCELARA"
+                      elif [ -f "$UNPACKED_DIR/accelara" ]; then
+                        EXEC_NAME="accelara"
+                      fi
+                      
+                      DESKTOP_CONTENT="[Desktop Entry]
 Name=ACCELARA
 Comment=Unified HTTP + BitTorrent Download Manager
-Exec=ACCELARA
+Exec=$EXEC_NAME
 Icon=accelara
 Type=Application
 Categories=Utility;Network;
-EOF
+StartupNotify=false
+"
+                      echo "$DESKTOP_CONTENT" > "$DESKTOP_FILE"
+                      echo "$DESKTOP_CONTENT" > "$DESKTOP_FILE_ALT"
+                      echo "  Created .desktop files at: $DESKTOP_FILE and $DESKTOP_FILE_ALT"
                       NEEDS_STRUCTURE=true
+                    else
+                      echo "  Found existing .desktop file: $DESKTOP_FILE"
                     fi
                     
                     # Check for icon
@@ -511,6 +530,12 @@ EOF
                       echo "  ✓ AppDir structure already complete"
                     fi
                     
+                    # Ensure we're in the right directory and use absolute paths
+                    WORKSPACE_ROOT="$(pwd)"
+                    cd "$WORKSPACE_ROOT"
+                    
+                    # Try creating AppImage with verbose output
+                    echo "  Running: $APPIMAGETOOL_CMD \"$UNPACKED_DIR\" \"release/$APPIMAGE_NAME\""
                     if $APPIMAGETOOL_CMD "$UNPACKED_DIR" "release/$APPIMAGE_NAME" 2>&1; then
                       if [ -f "release/$APPIMAGE_NAME" ]; then
                         echo "  ✓ Successfully created AppImage manually: release/$APPIMAGE_NAME"
@@ -731,7 +756,7 @@ EOF
           fi
           
           if [ -n "$ARTIFACT" ]; then
-            echo "Found artifact: $ARTIFACT"
+          echo "Found artifact: $ARTIFACT"
             ls -lh "$ARTIFACT" || true
           else
             echo "Warning: No artifact found"
@@ -766,7 +791,7 @@ EOF
       - name: Determine version
         id: version
         run: |
-          VERSION="${GITHUB_REF#refs/tags/}"
+            VERSION="${GITHUB_REF#refs/tags/}"
           echo "version=$VERSION" >> $GITHUB_OUTPUT
           echo "Version: $VERSION"
 
