@@ -258,6 +258,31 @@ if (!fs.existsSync(asarPath)) {
   
   // Create asar file
   try {
+    // Verify temp directory exists and has content
+    if (!fs.existsSync(tempAppDir)) {
+      console.error('✗ ERROR: Temp app directory was not created:', tempAppDir);
+      process.exit(1);
+    }
+    
+    const tempContents = fs.readdirSync(tempAppDir);
+    if (tempContents.length === 0) {
+      console.error('✗ ERROR: Temp app directory is empty:', tempAppDir);
+      process.exit(1);
+    }
+    console.log('✓ Temp app directory created with', tempContents.length, 'items');
+    
+    // Verify dist and electron directories exist
+    const distInTemp = path.join(tempAppDir, 'dist');
+    const electronInTemp = path.join(tempAppDir, 'electron');
+    if (!fs.existsSync(distInTemp)) {
+      console.error('✗ ERROR: dist directory not found in temp app:', distInTemp);
+      process.exit(1);
+    }
+    if (!fs.existsSync(electronInTemp)) {
+      console.error('✗ ERROR: electron directory not found in temp app:', electronInTemp);
+      process.exit(1);
+    }
+    
     // Use system asar directly (prefer /opt/homebrew/bin/asar or /usr/local/bin/asar)
     let asarBinary = '/opt/homebrew/bin/asar';
     if (!fs.existsSync(asarBinary)) {
@@ -270,10 +295,32 @@ if (!fs.existsSync(asarPath)) {
     
     const asarCommand = asarBinary 
       ? `"${asarBinary}" pack "${tempAppDir}" "${asarPath}"`
-      : `npx asar pack "${tempAppDir}" "${asarPath}"`;
+      : `npx --yes asar pack "${tempAppDir}" "${asarPath}"`;
     
     console.log('Running:', asarCommand);
-    execSync(asarCommand, { stdio: 'inherit', cwd: projectDir, shell: true });
+    console.log('Temp dir:', tempAppDir);
+    console.log('Output path:', asarPath);
+    
+    // Capture both stdout and stderr for better error reporting
+    let output = '';
+    let errorOutput = '';
+    try {
+      output = execSync(asarCommand, { 
+        cwd: projectDir, 
+        shell: true,
+        encoding: 'utf8',
+        stdio: ['ignore', 'pipe', 'pipe']
+      });
+      if (output) console.log('asar output:', output);
+    } catch (execError) {
+      errorOutput = execError.stderr ? execError.stderr.toString() : execError.message;
+      if (execError.stdout) {
+        output = execError.stdout.toString();
+        console.log('asar stdout:', output);
+      }
+      console.error('asar stderr:', errorOutput);
+      throw execError;
+    }
     
     // Verify it was created
     if (fs.existsSync(asarPath)) {
@@ -281,12 +328,18 @@ if (!fs.existsSync(asarPath)) {
       console.log('✓ Created app.asar manually (' + (stats.size / 1024 / 1024).toFixed(2) + ' MB)');
     } else {
       console.error('✗ app.asar was not created at expected path:', asarPath);
+      console.error('  Temp directory contents:', fs.readdirSync(tempAppDir));
+      console.error('  Resources directory exists:', fs.existsSync(finalResourcesPath));
+      if (fs.existsSync(finalResourcesPath)) {
+        console.error('  Resources directory contents:', fs.readdirSync(finalResourcesPath));
+      }
       process.exit(1);
     }
   } catch (error) {
     console.error('✗ Failed to create app.asar:', error.message);
-    if (error.stdout) console.error('stdout:', error.stdout);
-    if (error.stderr) console.error('stderr:', error.stderr);
+    if (error.stdout) console.error('stdout:', error.stdout.toString());
+    if (error.stderr) console.error('stderr:', error.stderr.toString());
+    console.error('Full error:', error);
     process.exit(1);
   } finally {
     // Clean up temp directory
