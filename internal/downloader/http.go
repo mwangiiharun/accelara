@@ -78,9 +78,17 @@ func NewHTTPDownloader(sourceURL, outPath string, opts Options) *HTTPDownloader 
 	client := &http.Client{
 		Transport: transport,
 		Timeout:   time.Duration(opts.ConnectTimeout) * time.Second,
+		CheckRedirect: func(req *http.Request, via []*http.Request) error {
+			// Follow redirects automatically
+			// Limit redirect chain to prevent infinite loops (max 10 redirects)
+			if len(via) >= 10 {
+				return fmt.Errorf("stopped after 10 redirects")
+			}
+			return nil
+		},
 	}
 
-	return &HTTPDownloader{
+	downloader := &HTTPDownloader{
 		sourceURL:           sourceURL,
 		outPath:             outPath,
 		chunkSize:           opts.ChunkSize,
@@ -98,6 +106,43 @@ func NewHTTPDownloader(sourceURL, outPath string, opts Options) *HTTPDownloader 
 		lastReportedTime:    time.Now(),
 		maxConnectionFailures: 10, // Max failures before pausing
 	}
+	
+	// Resolve redirects and update sourceURL to final URL
+	if err := downloader.resolveRedirects(); err != nil {
+		// If redirect resolution fails, continue with original URL
+		// (some servers might not allow HEAD requests)
+	}
+	
+	return downloader
+}
+
+// resolveRedirects follows redirects and updates sourceURL to the final URL
+func (d *HTTPDownloader) resolveRedirects() error {
+	req, err := http.NewRequest("HEAD", d.sourceURL, nil)
+	if err != nil {
+		return err
+	}
+
+	resp, err := d.client.Do(req)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+
+	// Get final URL after redirects
+	finalURL := resp.Request.URL.String()
+	if finalURL != d.sourceURL {
+		if d.reporter != nil {
+			d.reporter.Report(map[string]interface{}{
+				"type":    "http",
+				"status":  "info",
+				"message": fmt.Sprintf("Following redirect: %s -> %s", d.sourceURL, finalURL),
+			})
+		}
+		d.sourceURL = finalURL
+	}
+
+	return nil
 }
 
 // Helper function to check if download is paused
@@ -341,18 +386,85 @@ func (d *HTTPDownloader) probe() error {
 	}
 	defer resp.Body.Close()
 
+	// Update sourceURL to final URL after redirects
+	finalURL := resp.Request.URL.String()
+	if finalURL != d.sourceURL {
+		if d.reporter != nil {
+			d.reporter.Report(map[string]interface{}{
+				"type":    "http",
+				"status":  "info",
+				"message": fmt.Sprintf("Redirected to: %s", finalURL),
+			})
+		}
+		d.sourceURL = finalURL
+	}
+
+	// Check response status
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		// HEAD might not be supported, try GET with Range header instead
+		req, _ := http.NewRequest("GET", d.sourceURL, nil)
+		req.Header.Set("Range", "bytes=0-0")
+		resp2, err := d.client.Do(req)
+		if err != nil {
+			return fmt.Errorf("failed to probe URL: HEAD returned %d, GET failed: %s", resp.StatusCode, err)
+		}
+		defer resp2.Body.Close()
+		
+		// Update sourceURL again if GET request was redirected
+		finalURL2 := resp2.Request.URL.String()
+		if finalURL2 != d.sourceURL {
+			if d.reporter != nil {
+				d.reporter.Report(map[string]interface{}{
+					"type":    "http",
+					"status":  "info",
+					"message": fmt.Sprintf("Redirected to: %s", finalURL2),
+				})
+			}
+			d.sourceURL = finalURL2
+		}
+		
+		if resp2.StatusCode < 200 || resp2.StatusCode >= 300 {
+			return fmt.Errorf("unexpected HTTP status: %d %s", resp2.StatusCode, resp2.Status)
+		}
+		
+		// Use response from GET request
+		resp = resp2
+	}
+
 	if resp.Header.Get("Content-Length") != "" {
 		d.totalSize, _ = strconv.ParseInt(resp.Header.Get("Content-Length"), 10, 64)
+	} else if resp.ContentLength > 0 {
+		// Use ContentLength field directly
+		d.totalSize = resp.ContentLength
 	}
 	d.acceptRanges = resp.Header.Get("Accept-Ranges") == "bytes"
 
+	// If still no size, try a small range request to get Content-Length
 	if d.totalSize == 0 {
 		req, _ := http.NewRequest("GET", d.sourceURL, nil)
 		req.Header.Set("Range", "bytes=0-0")
 		resp, err := d.client.Do(req)
 		if err == nil {
-			if resp.Header.Get("Content-Length") != "" {
-				d.totalSize, _ = strconv.ParseInt(resp.Header.Get("Content-Length"), 10, 64)
+			if resp.StatusCode >= 200 && resp.StatusCode < 300 {
+				if resp.Header.Get("Content-Length") != "" {
+					d.totalSize, _ = strconv.ParseInt(resp.Header.Get("Content-Length"), 10, 64)
+				} else if resp.ContentLength > 0 {
+					d.totalSize = resp.ContentLength
+				}
+				// For 206 Partial Content, Content-Length is the range size, not total
+				// We need Content-Range header to get total size
+				if resp.StatusCode == http.StatusPartialContent {
+					contentRange := resp.Header.Get("Content-Range")
+					if contentRange != "" {
+						// Format: "bytes 0-0/1234567" - extract total size
+						parts := strings.Split(contentRange, "/")
+						if len(parts) == 2 {
+							if total, err := strconv.ParseInt(parts[1], 10, 64); err == nil {
+								d.totalSize = total
+							}
+						}
+					}
+				}
 			}
 			resp.Body.Close()
 		}
@@ -414,6 +526,40 @@ func (d *HTTPDownloader) downloadSingle() error {
 		return err
 	}
 	defer resp.Body.Close()
+
+	// Update sourceURL to final URL after redirects (in case redirects happen during download)
+	finalURL := resp.Request.URL.String()
+	if finalURL != d.sourceURL {
+		if d.reporter != nil {
+			d.reporter.Report(map[string]interface{}{
+				"type":    "http",
+				"status":  "info",
+				"message": fmt.Sprintf("Redirected during download to: %s", finalURL),
+			})
+		}
+		d.sourceURL = finalURL
+	}
+
+	// Check response status
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return fmt.Errorf("unexpected HTTP status: %d %s", resp.StatusCode, resp.Status)
+	}
+
+	// Update totalSize from response Content-Length if available and not already set
+	if resp.ContentLength > 0 && d.totalSize == 0 {
+		d.totalSize = resp.ContentLength
+	} else if resp.ContentLength > 0 && d.totalSize != resp.ContentLength {
+		// Content-Length changed - use the one from actual response
+		// This can happen if we were redirected to a different file
+		if d.reporter != nil {
+			d.reporter.Report(map[string]interface{}{
+				"type":    "http",
+				"status":  "info",
+				"message": fmt.Sprintf("Content-Length changed from %d to %d (redirected to different file?)", d.totalSize, resp.ContentLength),
+			})
+		}
+		d.totalSize = resp.ContentLength
+	}
 
 	buf := make([]byte, 65536)
 	lastUpdate := time.Now()
@@ -501,6 +647,53 @@ func (d *HTTPDownloader) downloadSingle() error {
 	// Check if paused before completing
 	if d.isPaused() {
 		return fmt.Errorf("download paused: %s", d.pauseReason)
+	}
+
+	// Verify downloaded size matches expected size before completing
+	d.downloadedMutex.Lock()
+	downloaded := d.downloaded
+	d.downloadedMutex.Unlock()
+
+	// Get actual file size
+	fileInfo, err := file.Stat()
+	if err != nil {
+		return fmt.Errorf("failed to stat downloaded file: %s", err)
+	}
+	actualSize := fileInfo.Size()
+
+	// If we have an expected totalSize, verify it matches
+	if d.totalSize > 0 {
+		if actualSize != d.totalSize {
+			return fmt.Errorf("download incomplete: expected %d bytes, downloaded %d bytes (%.2f%%)", 
+				d.totalSize, actualSize, float64(actualSize)/float64(d.totalSize)*100)
+		}
+		if downloaded != d.totalSize {
+			return fmt.Errorf("download size mismatch: expected %d bytes, tracked %d bytes", 
+				d.totalSize, downloaded)
+		}
+	} else {
+		// No Content-Length - verify downloaded matches file size
+		if downloaded != actualSize {
+			return fmt.Errorf("download size mismatch: tracked %d bytes, file size %d bytes", 
+				downloaded, actualSize)
+		}
+		// For downloads without Content-Length, check if file is suspiciously small
+		// (e.g., 16KB suggests an error page or redirect response)
+		if actualSize < 1024*1024 && actualSize == 16384 {
+			// 16KB is suspicious - might be an error page or incomplete redirect
+			// Read first few bytes to check if it's HTML/JSON error
+			file.Seek(0, 0)
+			header := make([]byte, 512)
+			n, _ := file.Read(header)
+			file.Seek(0, 0)
+			headerStr := string(header[:n])
+			if strings.Contains(headerStr, "<html") || 
+			   strings.Contains(headerStr, "<!DOCTYPE") ||
+			   strings.Contains(headerStr, "\"error\"") ||
+			   strings.Contains(headerStr, "error") {
+				return fmt.Errorf("download appears to be an error page (16KB HTML/JSON), not the actual file")
+			}
+		}
 	}
 
 	// Move from temp to final destination
@@ -810,6 +1003,24 @@ func (d *HTTPDownloader) downloadChunk(idx int, c chunk) error {
 		return err
 	}
 	defer resp.Body.Close()
+
+	// Update sourceURL to final URL after redirects (in case redirects happen during chunk download)
+	finalURL := resp.Request.URL.String()
+	if finalURL != d.sourceURL {
+		// Update sourceURL to use the redirected URL for future requests
+		d.multiConnectionMutex.Lock()
+		shouldLog := !d.multiConnectionFailed
+		d.multiConnectionMutex.Unlock()
+		
+		if shouldLog && d.reporter != nil {
+			d.reporter.Report(map[string]interface{}{
+				"type":    "http",
+				"status":  "info",
+				"message": fmt.Sprintf("Redirected during chunk download to: %s", finalURL),
+			})
+		}
+		d.sourceURL = finalURL
+	}
 
 	// Check if server disallows multiple connections
 	if resp.StatusCode == http.StatusForbidden || resp.StatusCode == http.StatusTooManyRequests || 

@@ -1,5 +1,7 @@
 package downloader
 
+import "context"
+
 // StatusReporter interface for reporting download status
 type StatusReporter interface {
 	Report(status map[string]interface{})
@@ -18,7 +20,9 @@ type Options struct {
 	BTUploadLimit  int64
 	BTSequential   bool
 	BTKeepSeeding  bool
+	BTPort         int // BitTorrent listen port (0 = use default/auto)
 	Quiet          bool
 	StatusReporter StatusReporter
 	DownloadID     string // For state persistence
+	Context        context.Context // For cancellation
 }

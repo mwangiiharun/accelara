@@ -1,11 +1,11 @@
 import { useState } from 'react';
 import { useDownloads } from '../context/DownloadContext';
-import { Zap, Magnet, File, X, Pause, Play, FolderOpen, ChevronDown, ChevronUp, Activity } from 'lucide-react';
+import { Zap, Magnet, File, X, Pause, Play, FolderOpen, ChevronDown, ChevronUp, Activity, Trash2 } from 'lucide-react';
 import { formatBytes, formatTime } from '../utils/format';
 import SpeedChart from './SpeedChart';
 
 export default function DownloadItem({ download }) {
-  const { stopDownload, pauseDownload, resumeDownload } = useDownloads();
+  const { stopDownload, pauseDownload, resumeDownload, removeDownload } = useDownloads();
   const [showChunks, setShowChunks] = useState(false);
   const [showFiles, setShowFiles] = useState(false);
 
@@ -102,6 +102,14 @@ export default function DownloadItem({ download }) {
               <X className="w-4 h-4 theme-text-secondary" />
             </button>
           )}
+          {/* Close/Remove button - always visible */}
+          <button
+            onClick={() => removeDownload(download.id)}
+            className="p-1 hover:theme-bg-hover rounded transition-colors"
+            title="Remove download and delete partial files"
+          >
+            <Trash2 className="w-4 h-4 theme-text-secondary" />
+          </button>
         </div>
       </div>
 

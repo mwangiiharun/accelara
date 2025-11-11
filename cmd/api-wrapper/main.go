@@ -1,11 +1,14 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"flag"
 	"fmt"
 	"os"
+	"os/signal"
 	"path/filepath"
+	"syscall"
 	"time"
 
 	"github.com/accelara/clidm/internal/downloader"
@@ -47,6 +50,7 @@ func main() {
 		btUploadLimit  = flag.String("bt-upload-limit", "", "BT upload limit")
 		btSequential   = flag.Bool("bt-sequential", false, "Sequential mode")
 		btKeepSeeding  = flag.Bool("bt-keep-seeding", false, "Keep seeding after download completes")
+		btPort         = flag.Int("bt-port", 0, "BitTorrent listen port (0 = use default/auto)")
 		connectTimeout = flag.Int("connect-timeout", 15, "Connect timeout")
 		readTimeout    = flag.Int("read-timeout", 60, "Read timeout")
 		retries        = flag.Int("retries", 5, "Retries")
@@ -98,6 +102,10 @@ func main() {
 
 	absOutPath, _ := filepath.Abs(*output)
 
+	// Set up signal handling for graceful shutdown
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
 	opts := downloader.Options{
 		Connections:    *connections,
 		ChunkSize:      chunkSizeBytes,
@@ -109,20 +117,58 @@ func main() {
 		BTUploadLimit:  btUploadLimitBytes,
 		BTSequential:   *btSequential,
 		BTKeepSeeding:  *btKeepSeeding,
+		BTPort:         *btPort,
 		Quiet:          true,
 		StatusReporter: reporter,
 		DownloadID:     *downloadID,
+		Context:        ctx,
 	}
+
+	// Channel to receive OS signals
+	sigChan := make(chan os.Signal, 1)
+	signal.Notify(sigChan, os.Interrupt, syscall.SIGTERM, syscall.SIGINT)
+
+	// Goroutine to handle shutdown signals
+	go func() {
+		sig := <-sigChan
+		fmt.Fprintf(os.Stderr, "\nReceived signal: %v. Shutting down gracefully...\n", sig)
+		reporter.Report(map[string]interface{}{
+			"type":    "info",
+			"status":  "stopping",
+			"message": "Shutdown signal received, closing connections and releasing ports...",
+		})
+		cancel() // Cancel the context to stop downloads
+	}()
 
 	if utils.IsTorrentLike(*source) {
 		dl := downloader.NewTorrentDownloader(*source, absOutPath, opts)
-		if err := dl.Download(); err != nil {
+		// Run download in a goroutine so we can wait for signals
+		errChan := make(chan error, 1)
+		go func() {
+			errChan <- dl.Download()
+		}()
+
+		select {
+		case err := <-errChan:
+			if err != nil {
+				reporter.Report(map[string]interface{}{
+					"type":    "error",
+					"status":  "error",
+					"message": err.Error(),
+				})
+				os.Exit(1)
+			}
+		case <-ctx.Done():
+			// Context cancelled - shutdown signal received
+			// The torrent client's defer Close() will handle cleanup
 			reporter.Report(map[string]interface{}{
-				"type":    "error",
-				"status":  "error",
-				"message": err.Error(),
+				"type":    "info",
+				"status":  "stopped",
+				"message": "Download stopped by user. Ports released.",
 			})
-			os.Exit(1)
+			// Give a moment for cleanup
+			time.Sleep(500 * time.Millisecond)
+			os.Exit(0)
 		}
 	} else {
 		outFile := absOutPath
@@ -132,13 +178,30 @@ func main() {
 
 		opts.DownloadID = *downloadID
 		dl := downloader.NewHTTPDownloader(*source, outFile, opts)
-		if err := dl.Download(); err != nil {
+		// Run download in a goroutine so we can wait for signals
+		errChan := make(chan error, 1)
+		go func() {
+			errChan <- dl.Download()
+		}()
+
+		select {
+		case err := <-errChan:
+			if err != nil {
+				reporter.Report(map[string]interface{}{
+					"type":    "error",
+					"status":  "error",
+					"message": err.Error(),
+				})
+				os.Exit(1)
+			}
+		case <-ctx.Done():
+			// Context cancelled - shutdown signal received
 			reporter.Report(map[string]interface{}{
-				"type":    "error",
-				"status":  "error",
-				"message": err.Error(),
+				"type":    "info",
+				"status":  "stopped",
+				"message": "Download stopped by user.",
 			})
-			os.Exit(1)
+			os.Exit(0)
 		}
 	}
 }

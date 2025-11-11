@@ -46,6 +46,12 @@ mac:
     - name: Magnet Link
       schemes:
         - magnet
+  fileAssociations:
+    - ext: torrent
+      name: Torrent File
+      description: BitTorrent file
+      mimeType: application/x-bittorrent
+      role: Viewer
 
 win:
   icon: build/icon.ico
@@ -56,6 +62,12 @@ win:
     - name: Magnet Link
       schemes:
         - magnet
+  fileAssociations:
+    - ext: torrent
+      name: Torrent File
+      description: BitTorrent file
+      mimeType: application/x-bittorrent
+      role: Viewer
 
 nsis:
   oneClick: false
@@ -82,10 +94,12 @@ publish:
   channel: latest
   publishAutoUpdate: true
 
+# Global file associations (applied to all platforms)
 fileAssociations:
   - ext: torrent
     name: Torrent File
     description: BitTorrent file
     mimeType: application/x-bittorrent
+    role: Viewer
 
 afterPack: "./build/afterPack.js"

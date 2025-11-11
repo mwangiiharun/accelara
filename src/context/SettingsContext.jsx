@@ -13,6 +13,7 @@ export function SettingsProvider({ children }) {
     connectTimeout: 15,
     readTimeout: 60,
     retries: 5,
+    torrentPort: 42069,
   });
   const [systemTheme, setSystemTheme] = useState('dark');
 

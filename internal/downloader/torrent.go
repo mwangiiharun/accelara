@@ -1,16 +1,24 @@
 package downloader
 
 import (
+	"context"
 	"fmt"
+	"net"
 	"net/http"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/anacrolix/torrent"
 	"github.com/anacrolix/torrent/metainfo"
 	"golang.org/x/time/rate"
 )
+
+// Helper function to check if error string contains a substring (case-insensitive)
+func contains(s, substr string) bool {
+	return strings.Contains(strings.ToLower(s), strings.ToLower(substr))
+}
 
 type TorrentDownloader struct {
 	source        string
@@ -22,6 +30,8 @@ type TorrentDownloader struct {
 	quiet         bool
 	reporter      StatusReporter
 	downloadID    string // For state persistence
+	ctx            context.Context // For cancellation
+	opts           Options // Store full options for access to BTPort
 	
 	// For accurate speed calculation
 	lastBytesRead    int64
@@ -31,6 +41,10 @@ type TorrentDownloader struct {
 }
 
 func NewTorrentDownloader(source, outPath string, opts Options) *TorrentDownloader {
+	ctx := opts.Context
+	if ctx == nil {
+		ctx = context.Background()
+	}
 	return &TorrentDownloader{
 		source:        source,
 		outPath:       outPath,
@@ -41,6 +55,8 @@ func NewTorrentDownloader(source, outPath string, opts Options) *TorrentDownload
 		quiet:         opts.Quiet,
 		reporter:      opts.StatusReporter,
 		downloadID:    opts.DownloadID,
+		ctx:           ctx,
+		opts:          opts, // Store full options for access to BTPort
 	}
 }
 
@@ -59,8 +75,62 @@ func (d *TorrentDownloader) Download() error {
 		cfg.DownloadRateLimiter = rate.NewLimiter(rate.Limit(d.downloadLimit), int(d.downloadLimit))
 	}
 
+	// Determine base port - use configured port if set, otherwise default to 42069
+	basePort := 42069
+	if d.opts.BTPort > 0 {
+		basePort = d.opts.BTPort
+	}
+	
+	maxAttempts := 5
+	var selectedPort int
+	
+	// Find an available port starting from basePort
+	for attempt := 0; attempt < maxAttempts; attempt++ {
+		port := basePort + attempt
+		addr := fmt.Sprintf("0.0.0.0:%d", port)
+		
+		// Try to listen on this port to check if it's available
+		listener, err := net.Listen("tcp", addr)
+		if err == nil {
+			// Port is available - close the test listener and use this port
+			listener.Close()
+			selectedPort = port
+			break
+		}
+		
+		// If this is the last attempt, return error
+		if attempt == maxAttempts-1 {
+			return fmt.Errorf("failed to find available port (tried %d-%d): port %d is already in use. This usually means another instance of ACCELARA is running, or another BitTorrent client is using that port. Please close other instances and try again, or change the port in settings", basePort, basePort+maxAttempts-1, basePort)
+		}
+	}
+	
+	// Configure the client to use the found port
+	if selectedPort != 0 && selectedPort != basePort {
+		cfg.ListenPort = selectedPort
+		if d.reporter != nil {
+			d.reporter.Report(map[string]interface{}{
+				"type":    "torrent",
+				"status":  "info",
+				"message": fmt.Sprintf("Using port %d (configured port %d was in use)", selectedPort, basePort),
+			})
+		}
+	} else if selectedPort == 0 {
+		// No port found, but we'll try default anyway
+		selectedPort = basePort
+	} else {
+		// Using configured port successfully
+		cfg.ListenPort = selectedPort
+	}
+	
+	// Try to create client
 	client, err := torrent.NewClient(cfg)
 	if err != nil {
+		errStr := err.Error()
+		// Check if error is port-related
+		if contains(errStr, "bind") || contains(errStr, "address already in use") || contains(errStr, "listen tcp4") {
+			// Provide helpful error message
+			return fmt.Errorf("failed to create torrent client: port %d is already in use. This usually means another instance of ACCELARA is running, or another BitTorrent client is using that port. Please close other instances and try again, or wait a few seconds for the port to be released. Error: %w", selectedPort, err)
+		}
 		return fmt.Errorf("failed to create torrent client: %w", err)
 	}
 	defer client.Close()
@@ -202,6 +272,18 @@ func (d *TorrentDownloader) Download() error {
 
 	for {
 		select {
+		case <-d.ctx.Done():
+			// Context cancelled - shutdown signal received
+			// Close the torrent client to release ports
+			if d.reporter != nil {
+				d.reporter.Report(map[string]interface{}{
+					"type":    "torrent",
+					"status":  "stopping",
+					"message": "Shutdown signal received, closing torrent client and releasing ports...",
+				})
+			}
+			// The defer client.Close() will handle cleanup
+			return nil
 		case <-t.Closed():
 			return nil
 		case <-ticker.C:

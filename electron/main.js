@@ -177,15 +177,12 @@ function setupWindowLoadHandlers(mainWindow, isDev) {
     // dist/index.html is at app.asar/dist/index.html
     const appPath = app.getAppPath();
     const filePath = path.join(appPath, 'dist', 'index.html');
-    console.log('Loading file:', filePath);
-    console.log('App path:', appPath);
     
     mainWindow.loadFile(filePath).catch(err => {
       try {
         console.error('Error loading file:', err);
         // Fallback: try relative path from __dirname
         const fallbackPath = path.join(__dirname, '../dist/index.html');
-        console.log('Trying fallback path:', fallbackPath);
         mainWindow.loadFile(fallbackPath).catch(fallbackErr => {
           console.error('Failed to load fallback path:', fallbackErr);
         });
@@ -248,7 +245,6 @@ function createWindow() {
   });
 
   mainWindow.on('closed', () => {
-    console.log('Window closed');
     mainWindow = null;
   });
 }
@@ -405,19 +401,60 @@ async function closeCompletely() {
   app.quit();
 }
 
-// Graceful shutdown - stop all active downloads
+// Graceful shutdown - pause all active downloads and stop processes
 async function gracefulShutdown() {
-  console.log('Gracefully shutting down...');
+  // Pause all active downloads in database before stopping processes
+  const db = await getDatabase();
+  const activeDownloads = db.prepare(`
+    SELECT * FROM downloads 
+    WHERE status NOT IN ('completed', 'failed', 'cancelled', 'paused')
+    ORDER BY started_at DESC
+  `).all();
+  
+  // Mark all active downloads as paused
+  for (const download of activeDownloads) {
+    try {
+      const metadata = download.metadata ? JSON.parse(download.metadata) : {};
+      const pausedMetadata = {
+        ...metadata,
+        pause_reason: 'Paused on app exit',
+        paused_at: Date.now(),
+        // Preserve current state
+        progress: download.progress || 0,
+        downloaded: download.downloaded || 0,
+        total: download.total || 0,
+        speed: download.speed || 0,
+        options: metadata.options || {},
+      };
+      
+      db.prepare(`
+        UPDATE downloads 
+        SET status = ?, metadata = ?, progress = ?, downloaded = ?, total = ?, speed = ?
+        WHERE id = ?
+      `).run(
+        'paused',
+        JSON.stringify(pausedMetadata),
+        download.progress || 0,
+        download.downloaded || 0,
+        download.total || 0,
+        download.speed || 0,
+        download.id
+      );
+    } catch (error) {
+      console.error(`Error pausing download ${download.id} on shutdown:`, error.message);
+    }
+  }
   
   // Stop all active download processes
   for (const [downloadId, proc] of downloadProcesses.entries()) {
     try {
       proc.kill('SIGTERM');
-      // Wait a bit for graceful shutdown
-      await new Promise(resolve => setTimeout(resolve, 1000));
+      // Wait longer for graceful shutdown (especially for torrent clients to release ports)
+      await new Promise(resolve => setTimeout(resolve, 2000));
       // Force kill if still running
       if (!proc.killed) {
         proc.kill('SIGKILL');
+        await new Promise(resolve => setTimeout(resolve, 500));
       }
     } catch (error) {
       console.error(`Error stopping download ${downloadId}:`, error.message);
@@ -425,7 +462,6 @@ async function gracefulShutdown() {
   }
   
   downloadProcesses.clear();
-  console.log('All downloads stopped');
 }
 
 // Helper function to setup process handlers for a restarted download
@@ -538,7 +574,6 @@ async function reattachToDownloads() {
       return;
     }
     
-    console.log(`Reattaching to ${activeDownloads.length} active download(s)...`);
     
     if (!mainWindow || mainWindow.isDestroyed()) {
       return;
@@ -552,26 +587,56 @@ async function reattachToDownloads() {
           const metadata = download.metadata ? JSON.parse(download.metadata) : {};
           const options = metadata.options || {};
           
-          const args = buildCommandArgs(download.source, download.output, download.id, options);
-          const goBinary = verifyAndNormalizeBinary(findGoBinary());
-          
-          // For cwd, we need a real directory, not inside ASAR
-          let workingDir;
-          if (app.isPackaged) {
-            workingDir = os.homedir();
-          } else {
-            workingDir = path.join(__dirname, '..');
+          // All downloads should be paused on startup (enforced by gracefulShutdown)
+          // If status is not paused, mark it as paused (safety check)
+          if (download.status !== 'paused') {
+            const pausedMetadata = {
+              ...metadata,
+              pause_reason: 'Paused on app exit',
+              paused_at: Date.now(),
+              options: metadata.options || {},
+            };
+            
+            db.prepare(`
+              UPDATE downloads 
+              SET status = ?, metadata = ?
+              WHERE id = ?
+            `).run('paused', JSON.stringify(pausedMetadata), download.id);
+            
+            download.status = 'paused';
+            metadata = pausedMetadata;
           }
           
-          const proc = spawn(goBinary, args, {
-            cwd: workingDir,
-            env: { ...process.env }
-          });
+          // Send paused download state to UI (don't auto-resume)
+          if (mainWindow && !mainWindow.isDestroyed()) {
+            // Send complete paused download state to UI
+            mainWindow.webContents.send('download-update', {
+              downloadId: download.id,
+              download_id: download.id,
+              source: download.source,
+              output: download.output,
+              type: download.type,
+              status: 'paused',
+              progress: download.progress || 0,
+              downloaded: download.downloaded || 0,
+              total: download.total || 0,
+              speed: download.speed || 0,
+              pause_reason: metadata.pause_reason || 'Paused on app exit',
+              // Include all metadata fields for complete state restoration
+              ...metadata,
+              // Preserve torrent-specific fields if present
+              torrent_name: metadata.torrent_name,
+              file_progress: metadata.file_progress,
+              peers: metadata.peers,
+              seeds: metadata.seeds,
+              // Preserve HTTP-specific fields if present
+              chunk_progress: metadata.chunk_progress,
+              speedHistory: metadata.speedHistory || [],
+            });
+          }
           
-          downloadProcesses.set(download.id, proc);
-          setupRestartedDownloadHandlers(proc, download.id, metadata, download);
-          
-          console.log(`Restarted download: ${download.id}`);
+          // Don't restart downloads - they should remain paused until user manually resumes
+          // User must click resume button to continue downloads
         } catch (error) {
           console.error(`Error restarting download ${download.id}:`, error.message);
         }
@@ -593,12 +658,19 @@ if (gotTheLock) {
       mainWindow.focus();
     }
     
-    // Handle command line arguments
-    handleArgs(commandLine.slice(1));
+    // Handle command line arguments (Windows file associations come through here)
+    console.log('Second instance detected with args:', commandLine);
+    // Skip the first arg (executable path) and process the rest
+    const args = commandLine.slice(1);
+    if (args.length > 0) {
+      handleArgs(args);
+    }
   });
 
+  // macOS: Handle magnet links via protocol handler
   app.on('open-url', (event, url) => {
     event.preventDefault();
+    console.log('open-url event received:', url);
     if (mainWindow) {
       handleMagnetLink(url);
     } else {
@@ -606,8 +678,10 @@ if (gotTheLock) {
     }
   });
 
+  // macOS: Handle .torrent file associations
   app.on('open-file', (event, filePath) => {
     event.preventDefault();
+    console.log('open-file event received:', filePath);
     if (mainWindow) {
       handleTorrentFile(filePath);
     } else {
@@ -674,8 +748,11 @@ function setDockIcon(isDev) {
     }, 1000);
 
     // Handle initial arguments (Windows file associations come through argv)
+    // On Windows, file associations pass the file path as an argument
+    // On macOS, they use the 'open-file' event (handled above)
     const args = process.argv.slice(1);
     if (args.length > 0) {
+      console.log('Processing initial arguments:', args);
       handleArgs(args);
     }
 
@@ -712,13 +789,21 @@ function handleArgs(args) {
   for (const arg of args) {
     if (!arg) continue;
     
+    // Skip Electron internal arguments
+    if (arg.startsWith('--') || arg === '.' || arg === './') {
+      continue;
+    }
+    
     // Handle magnet links
     if (arg.startsWith('magnet:')) {
+      console.log('Handling magnet link from args:', arg);
       handleMagnetLink(arg);
     } 
     // Handle .torrent files (Windows passes full path, macOS/Linux might pass relative)
     else if (arg.toLowerCase().endsWith('.torrent')) {
-      handleTorrentFile(arg);
+      // Resolve to absolute path if relative
+      const absolutePath = path.isAbsolute(arg) ? arg : path.resolve(process.cwd(), arg);
+      handleTorrentFile(absolutePath);
     }
   }
 }
@@ -763,6 +848,12 @@ function handleTorrentFile(filePath) {
   }
 }
 
+// Pause all downloads before app quits (enforced behavior)
+app.on('before-quit', async (event) => {
+  // Pause all active downloads before quitting
+  await gracefulShutdown();
+});
+
 app.on('window-all-closed', () => {
   // Check if we should keep running in background
   getDatabase().then((db) => {
@@ -783,39 +874,44 @@ app.on('window-all-closed', () => {
       return;
     }
     
-    // Normal quit behavior
+    // Normal quit behavior (downloads already paused by before-quit handler)
     if (process.platform !== 'darwin') {
-      gracefulShutdown().then(() => {
-        app.quit();
-      });
+      app.quit();
     }
   });
 });
 
-// Set as default protocol handler (macOS/Linux)
+// Set as default protocol handler for magnet links
+// This registers the app to handle magnet: protocol on macOS, Windows, and Linux
+// Note: In production, electron-builder automatically registers protocol handlers
+// This is mainly for development mode
 if (process.defaultApp) {
+  // Development mode
   if (process.argv.length >= 2) {
     app.setAsDefaultProtocolClient('magnet', process.execPath, [path.resolve(process.argv[1])]);
+    console.log('Registered as default handler for magnet: protocol (dev mode)');
   }
 } else {
-  app.setAsDefaultProtocolClient('magnet');
+  // Production mode - electron-builder handles registration, but we ensure it's set
+  const success = app.setAsDefaultProtocolClient('magnet');
+  if (success) {
+    console.log('Registered as default handler for magnet: protocol');
+  } else {
+    console.log('Note: Protocol handler registration handled by electron-builder');
+  }
 }
+
+// Note: File associations for .torrent files are handled by electron-builder
+// They are registered in electron-builder.yml and work automatically on install
+// On macOS: Uses Info.plist CFBundleDocumentTypes
+// On Windows: Uses NSIS installer registry entries
 
 // IPC Handlers
 ipcMain.handle('inspect-torrent', async (event, source) => {
   const { spawn } = require('node:child_process');
-  console.log('=== inspect-torrent: Starting ===');
-  console.log('Source:', source);
   
   const foundBinary = findGoBinary();
-  console.log('findGoBinary() returned:', foundBinary);
-  
   const goBinary = verifyAndNormalizeBinary(foundBinary);
-  console.log('verifyAndNormalizeBinary() returned:', goBinary);
-  console.log('About to spawn with path:', goBinary);
-  console.log('Path exists?', fs.existsSync(goBinary));
-  console.log('Path is file?', fs.existsSync(goBinary) ? fs.statSync(goBinary).isFile() : 'N/A');
-  console.log('Path is directory?', fs.existsSync(goBinary) ? fs.statSync(goBinary).isDirectory() : 'N/A');
 
   return new Promise((resolve, reject) => {
     // For cwd, we need a real directory, not inside ASAR
@@ -828,9 +924,6 @@ ipcMain.handle('inspect-torrent', async (event, source) => {
       // In dev, use project root
       workingDir = path.join(__dirname, '..');
     }
-    console.log('Working directory for spawn:', workingDir);
-    
-    console.log('Spawning process with:', goBinary, ['--inspect', '--source', source]);
     const proc = spawn(goBinary, ['--inspect', '--source', source], {
       cwd: workingDir,
       env: { ...process.env }
@@ -980,7 +1073,6 @@ function findGoBinary() {
       // If it points to app.asar, go up to the actual Resources directory
       const resourcesDir = path.dirname(process.resourcesPath);
       possiblePaths.push(path.join(resourcesDir, 'bin', binaryName));
-      console.log('process.resourcesPath points to app.asar, using Resources dir:', resourcesDir);
     } else {
       // Standard production path (resourcesPath is the Resources directory)
       possiblePaths.push(path.join(process.resourcesPath, 'bin', binaryName));
@@ -1099,25 +1191,6 @@ function findGoBinary() {
   // Remove duplicates and nulls
   const uniquePaths = [...new Set(possiblePaths.filter(Boolean))];
   
-  // Log paths being checked (only in production for debugging)
-  if (app.isPackaged) {
-    try {
-      console.log('=== Searching for Go binary ===');
-      console.log('Binary name:', binaryName);
-      console.log('Resources path:', process.resourcesPath);
-      console.log('__dirname:', __dirname);
-      if (app && typeof app.getPath === 'function') {
-        try {
-          console.log('App exe path:', app.getPath('exe'));
-          console.log('App path:', app.getAppPath());
-        } catch {}
-      }
-      console.log('Checking', uniquePaths.length, 'possible paths...');
-    } catch {
-      // Ignore logging errors
-    }
-  }
-  
   // Check each path in order
   for (const possiblePath of uniquePaths) {
     try {
@@ -1127,7 +1200,6 @@ function findGoBinary() {
           try {
             fs.accessSync(possiblePath, fs.constants.X_OK);
           } catch {
-            console.warn('Binary found but not executable:', possiblePath);
             // Not executable, try next path
             continue;
           }
@@ -1136,44 +1208,28 @@ function findGoBinary() {
         // Verify it's actually a file (not a directory)
         const stats = fs.statSync(possiblePath);
         if (stats.isDirectory()) {
-          console.warn('Path exists but is a directory (not a file):', possiblePath);
           // If it's a directory, try to find the binary inside it
           const binaryInDir = path.join(possiblePath, binaryName);
           if (fs.existsSync(binaryInDir) && fs.statSync(binaryInDir).isFile()) {
-            console.log('✓ Found Go binary inside directory at:', binaryInDir);
-            if (app.isPackaged) {
-              const dirStats = fs.statSync(binaryInDir);
-              console.log('  File size:', (dirStats.size / 1024 / 1024).toFixed(2), 'MB');
-            }
             return binaryInDir;
           }
           continue;
         }
         if (!stats.isFile()) {
-          console.warn('Path exists but is not a file:', possiblePath);
           continue;
         }
         
-        console.log('✓ Found Go binary at:', possiblePath);
-        if (app.isPackaged) {
-          console.log('  File size:', (stats.size / 1024 / 1024).toFixed(2), 'MB');
-        }
         // Return the absolute resolved path, ensuring it's a file path (not directory)
         const resolvedPath = path.resolve(possiblePath);
         // Double-check it's still a file after resolution
         const resolvedStats = fs.statSync(resolvedPath);
         if (!resolvedStats.isFile()) {
-          console.error('ERROR: Resolved path is not a file:', resolvedPath);
-          console.error('  isDirectory:', resolvedStats.isDirectory());
           continue; // Try next path
         }
         return resolvedPath;
       }
     } catch (err) {
       // Continue to next path if this one fails
-      if (app.isPackaged) {
-        console.warn('Error checking path:', possiblePath, err.message);
-      }
     }
   }
   
@@ -1231,11 +1287,6 @@ function verifyAndNormalizeBinary(binaryPath) {
     throw new Error('Binary path is empty or undefined');
   }
   
-  // Log the original path for debugging
-  console.log('verifyAndNormalizeBinary: Original path:', binaryPath);
-  console.log('verifyAndNormalizeBinary: __dirname:', __dirname);
-  console.log('verifyAndNormalizeBinary: process.cwd():', process.cwd());
-  
   // Normalize the path (resolve relative paths, remove trailing slashes, etc.)
   // Use path.normalize first to clean up the path, then resolve
   let normalizedPath = path.normalize(binaryPath);
@@ -1247,17 +1298,8 @@ function verifyAndNormalizeBinary(binaryPath) {
     normalizedPath = path.resolve(normalizedPath);
   }
   
-  console.log('verifyAndNormalizeBinary: Normalized path:', normalizedPath);
-  
   // Verify it exists first
   if (!fs.existsSync(normalizedPath)) {
-    console.error('verifyAndNormalizeBinary: Path does not exist:', normalizedPath);
-    // Try to find what does exist at that location
-    const parentDir = path.dirname(normalizedPath);
-    if (fs.existsSync(parentDir)) {
-      console.error('verifyAndNormalizeBinary: Parent directory exists:', parentDir);
-      console.error('verifyAndNormalizeBinary: Contents of parent:', fs.readdirSync(parentDir));
-    }
     throw new Error(`Binary not found at: ${normalizedPath}`);
   }
   
@@ -1265,24 +1307,15 @@ function verifyAndNormalizeBinary(binaryPath) {
   // This is important on macOS where paths might be symlinked
   try {
     normalizedPath = fs.realpathSync(normalizedPath);
-    console.log('verifyAndNormalizeBinary: Resolved real path:', normalizedPath);
   } catch (err) {
     // If realpathSync fails, use the original path
-    console.warn('verifyAndNormalizeBinary: Could not resolve real path, using original:', err.message);
+    // Silently continue
   }
   
   // Verify it's a file, not a directory
   const stats = fs.statSync(normalizedPath);
-  console.log('verifyAndNormalizeBinary: Stats:', {
-    isFile: stats.isFile(),
-    isDirectory: stats.isDirectory(),
-    mode: stats.mode.toString(8),
-    size: stats.size
-  });
   
   if (stats.isDirectory()) {
-    console.error('verifyAndNormalizeBinary: Path is a directory, not a file!');
-    console.error('verifyAndNormalizeBinary: Directory contents:', fs.readdirSync(normalizedPath));
     throw new Error(`Binary path is a directory, not a file: ${normalizedPath}`);
   }
   
@@ -1294,14 +1327,11 @@ function verifyAndNormalizeBinary(binaryPath) {
   if (process.platform !== 'win32') {
     try {
       fs.accessSync(normalizedPath, fs.constants.X_OK);
-      console.log('verifyAndNormalizeBinary: Binary is executable');
     } catch (err) {
-      console.error('verifyAndNormalizeBinary: Binary is not executable:', err.message);
       throw new Error(`Binary is not executable: ${normalizedPath}`);
     }
   }
   
-  console.log('verifyAndNormalizeBinary: Successfully verified binary at:', normalizedPath);
   return normalizedPath;
 }
 
@@ -1333,11 +1363,219 @@ function notifyDownloadComplete(downloadId, code, outputPath) {
   }
 }
 
-ipcMain.handle('start-download', async (event, { source, output, options }) => {
-  const downloadId = `${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
+// Helper function to store torrent state
+function storeTorrentState(database, status, downloadId) {
+  if (status.type === 'torrent' && status.info_hash && status.piece_count && status.piece_states) {
+    try {
+      const pieceStatesJson = JSON.stringify(status.piece_states);
+      const updateTorrentState = database.prepare(`
+        INSERT OR REPLACE INTO torrent_state (download_id, info_hash, piece_count, piece_states, verified_at)
+        VALUES (?, ?, ?, ?, ?)
+      `);
+      updateTorrentState.run(
+        downloadId,
+        status.info_hash,
+        status.piece_count,
+        pieceStatesJson,
+        Date.now()
+      );
+    } catch (error) {
+      // Ignore errors in state storage
+      console.debug('Failed to store torrent state:', error.message);
+    }
+  }
+}
+
+// Helper function to store HTTP state
+function storeHttpState(database, status, downloadId) {
+  if (status.type === 'http' && status.chunk_progress && status.chunk_count) {
+    try {
+      const chunkProgressJson = JSON.stringify(status.chunk_progress);
+      const download = database.prepare('SELECT source, output FROM downloads WHERE id = ?').get(downloadId);
+      if (download) {
+        const updateHttpState = database.prepare(`
+          INSERT OR REPLACE INTO http_state (download_id, source_url, file_path, total_size, chunk_count, chunk_progress, sha256, verified_at)
+          VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+        `);
+        updateHttpState.run(
+          downloadId,
+          download.source,
+          download.output,
+          status.total || 0,
+          status.chunk_count || 0,
+          chunkProgressJson,
+          status.sha256 || null,
+          Date.now()
+        );
+      }
+    } catch (error) {
+      // Ignore errors in state storage
+      console.debug('Failed to store HTTP state:', error.message);
+    }
+  }
+}
+
+// Helper function to process status update
+async function processStatusUpdate(status, downloadId) {
+  const updateData = { 
+    downloadId, 
+    download_id: downloadId,
+    ...status 
+  };
   
+  const database = await getDatabase();
+  
+  // Check current status in database - if paused, don't allow status updates to change it
+  const currentDownload = database.prepare('SELECT status FROM downloads WHERE id = ?').get(downloadId);
+  if (currentDownload && currentDownload.status === 'paused') {
+    // Download is paused - only allow updates that explicitly set status to paused
+    // Ignore any other status updates (they shouldn't happen, but protect against them)
+    if (status.status !== 'paused') {
+      // Silently ignore status updates for paused downloads
+      return;
+    }
+  }
+  
+  const existingDownload = database.prepare('SELECT metadata FROM downloads WHERE id = ?').get(downloadId);
+  let existingMetadata = {};
+  if (existingDownload && existingDownload.metadata) {
+    try {
+      existingMetadata = JSON.parse(existingDownload.metadata);
+    } catch {
+      // Ignore parse errors
+    }
+  }
+  
+  // If status is paused, update with pause reason and don't move to history
+  if (status.status === 'paused') {
+    const pausedMetadata = {
+      ...existingMetadata,
+      ...status,
+      pause_reason: status.pause_reason || status.message || 'Paused by user',
+      options: existingMetadata.options || {},
+      paused_at: Date.now(),
+    };
+    
+    // Update status, metadata, and all state fields
+    database.prepare(`
+      UPDATE downloads 
+      SET status = ?, progress = ?, downloaded = ?, total = ?, speed = ?, metadata = ?
+      WHERE id = ?
+    `).run(
+      'paused',
+      status.progress || 0,
+      status.downloaded || 0,
+      status.total || 0,
+      status.speed || status.download_rate || 0,
+      JSON.stringify(pausedMetadata),
+      downloadId
+    );
+    
+    // Send update to renderer
+    if (mainWindow && !mainWindow.isDestroyed()) {
+      mainWindow.webContents.send('download-update', {
+        ...updateData,
+        pause_reason: pausedMetadata.pause_reason,
+      });
+    }
+    return; // Don't process further - download is paused
+  }
+  
+  const updatedMetadata = {
+    ...existingMetadata,
+    ...status,
+    options: existingMetadata.options || {},
+  };
+  
+  const updateDownload = database.prepare(`
+    UPDATE downloads 
+    SET status = ?, progress = ?, downloaded = ?, total = ?, speed = ?, metadata = ?
+    WHERE id = ?
+  `);
+  updateDownload.run(
+    status.status || 'downloading',
+    status.progress || 0,
+    status.downloaded || 0,
+    status.total || 0,
+    status.speed || status.download_rate || 0,
+    JSON.stringify(updatedMetadata),
+    downloadId
+  );
+  
+  storeTorrentState(database, status, downloadId);
+  storeHttpState(database, status, downloadId);
+  
+  if (mainWindow && !mainWindow.isDestroyed()) {
+    mainWindow.webContents.send('download-update', updateData);
+  }
+}
+
+ipcMain.handle('start-download', async (event, { source, output, options }) => {
   // Default to ~/Downloads if no output specified
   const outputPath = await resolveOutputPath(output);
+  
+  // Check if download already exists (same source + output) to prevent duplicates
+  const db = await getDatabase();
+  const downloadType = determineDownloadType(source);
+  
+  // Check for existing active download with same source and output
+  const existingDownload = db.prepare(`
+    SELECT * FROM downloads 
+    WHERE source = ? AND output = ? 
+    AND status NOT IN ('completed', 'failed', 'cancelled')
+    ORDER BY started_at DESC
+    LIMIT 1
+  `).get(source, outputPath);
+  
+  let downloadId;
+  if (existingDownload) {
+    // Reuse existing download ID
+    downloadId = existingDownload.id;
+    
+    // Update existing download to initializing status
+    const existingMetadata = existingDownload.metadata ? JSON.parse(existingDownload.metadata) : {};
+    const updatedMetadata = {
+      ...existingMetadata,
+      options: options || existingMetadata.options || {},
+      type: downloadType,
+    };
+    
+    db.prepare(`
+      UPDATE downloads 
+      SET status = 'initializing', started_at = ?, metadata = ?
+      WHERE id = ?
+    `).run(Date.now(), JSON.stringify(updatedMetadata), downloadId);
+    
+    // If process exists, stop it first
+    const existingProc = downloadProcesses.get(downloadId);
+    if (existingProc) {
+      try {
+        existingProc.kill('SIGTERM');
+        await new Promise(resolve => setTimeout(resolve, 500));
+        if (!existingProc.killed) {
+          existingProc.kill('SIGKILL');
+        }
+      } catch (error) {
+        // Ignore errors
+      }
+      downloadProcesses.delete(downloadId);
+    }
+  } else {
+    // Create new download ID
+    downloadId = `${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
+    
+    // Store options in metadata for resume
+    const initialMetadata = {
+      options: options || {},
+      type: downloadType,
+    };
+    
+    const insertDownload = db.prepare(`
+      INSERT OR REPLACE INTO downloads (id, source, output, type, status, started_at, metadata)
+      VALUES (?, ?, ?, ?, 'initializing', ?, ?)
+    `);
+    insertDownload.run(downloadId, source, outputPath, downloadType, Date.now(), JSON.stringify(initialMetadata));
+  }
   
   // Ensure output directory exists
   if (!fs.existsSync(outputPath)) {
@@ -1346,36 +1584,8 @@ ipcMain.handle('start-download', async (event, { source, output, options }) => {
   
   const args = buildCommandArgs(source, outputPath, downloadId, options);
   
-  console.log('=== start-download: Starting ===');
-  console.log('Source:', source);
-  console.log('Output path:', outputPath);
-  
   const foundBinary = findGoBinary();
-  console.log('findGoBinary() returned:', foundBinary);
-  
   const goBinary = verifyAndNormalizeBinary(foundBinary);
-  console.log('verifyAndNormalizeBinary() returned:', goBinary);
-  console.log('About to spawn with path:', goBinary);
-  console.log('Path exists?', fs.existsSync(goBinary));
-  console.log('Path is file?', fs.existsSync(goBinary) ? fs.statSync(goBinary).isFile() : 'N/A');
-  console.log('Path is directory?', fs.existsSync(goBinary) ? fs.statSync(goBinary).isDirectory() : 'N/A');
-  console.log('Using Go binary:', goBinary);
-
-  // Determine download type and save to database
-  const downloadType = determineDownloadType(source);
-  const db = await getDatabase();
-  
-  // Store options in metadata for resume
-  const initialMetadata = {
-    options: options || {},
-    type: downloadType,
-  };
-  
-  const insertDownload = db.prepare(`
-    INSERT OR REPLACE INTO downloads (id, source, output, type, status, started_at, metadata)
-    VALUES (?, ?, ?, ?, 'initializing', ?, ?)
-  `);
-  insertDownload.run(downloadId, source, outputPath, downloadType, Date.now(), JSON.stringify(initialMetadata));
 
   // For cwd, we need a real directory, not inside ASAR
   let workingDir;
@@ -1384,18 +1594,17 @@ ipcMain.handle('start-download', async (event, { source, output, options }) => {
   } else {
     workingDir = path.join(__dirname, '..');
   }
-  console.log('Working directory for spawn:', workingDir);
   
-  console.log('Spawning process with:', goBinary, args);
   const proc = spawn(goBinary, args, {
     cwd: workingDir,
     env: { ...process.env }
   });
   
-  proc.on('error', (error) => {
+  proc.on('error', async (error) => {
     console.error('=== spawn error ===');
     console.error('Error code:', error.code);
     console.error('Error message:', error.message);
+    console.error('Error stack:', error.stack);
     console.error('Binary path used:', goBinary);
     console.error('Path exists?', fs.existsSync(goBinary));
     if (fs.existsSync(goBinary)) {
@@ -1407,155 +1616,53 @@ ipcMain.handle('start-download', async (event, { source, output, options }) => {
         size: stats.size
       });
     }
+    console.error('Working directory:', workingDir);
+    console.error('Working directory exists?', fs.existsSync(workingDir));
+    console.error('Arguments:', args);
+    
+    // Update download status to failed
+    try {
+      const db = await getDatabase();
+      const updateStatus = db.prepare('UPDATE downloads SET status = ?, error = ? WHERE id = ?');
+      updateStatus.run('failed', error.message, downloadId);
+      
+      // Notify renderer
+      if (mainWindow && !mainWindow.isDestroyed()) {
+        mainWindow.webContents.send('download-update', {
+          downloadId,
+          status: 'failed',
+          error: error.message,
+        });
+      }
+    } catch (dbError) {
+      console.error('Failed to update database:', dbError.message);
+    }
   });
 
   downloadProcesses.set(downloadId, proc);
 
   let isProcessActive = true;
 
-  // Helper function to store torrent state
-  function storeTorrentState(database, status, downloadId) {
-    if (status.type === 'torrent' && status.info_hash && status.piece_count && status.piece_states) {
-      try {
-        const pieceStatesJson = JSON.stringify(status.piece_states);
-        const updateTorrentState = database.prepare(`
-          INSERT OR REPLACE INTO torrent_state (download_id, info_hash, piece_count, piece_states, verified_at)
-          VALUES (?, ?, ?, ?, ?)
-        `);
-        updateTorrentState.run(
-          downloadId,
-          status.info_hash,
-          status.piece_count,
-          pieceStatesJson,
-          Date.now()
-        );
-      } catch (error) {
-        // Ignore errors in state storage
-        console.debug('Failed to store torrent state:', error.message);
-      }
-    }
-  }
-
-  // Helper function to store HTTP state
-  function storeHttpState(database, status, downloadId) {
-    if (status.type === 'http' && status.chunk_progress && status.chunk_count) {
-      try {
-        const chunkProgressJson = JSON.stringify(status.chunk_progress);
-        const download = database.prepare('SELECT source, output FROM downloads WHERE id = ?').get(downloadId);
-        if (download) {
-          const updateHttpState = database.prepare(`
-            INSERT OR REPLACE INTO http_state (download_id, source_url, file_path, total_size, chunk_count, chunk_progress, sha256, verified_at)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-          `);
-          updateHttpState.run(
-            downloadId,
-            download.source,
-            download.output,
-            status.total || 0,
-            status.chunk_count || 0,
-            chunkProgressJson,
-            status.sha256 || null,
-            Date.now()
-          );
-        }
-      } catch (error) {
-        // Ignore errors in state storage
-        console.debug('Failed to store HTTP state:', error.message);
-      }
-    }
-  }
-
-  // Helper function to process status update
-  async function processStatusUpdate(status, downloadId) {
-    const updateData = { 
-      downloadId, 
-      download_id: downloadId,
-      ...status 
-    };
-    
-    const database = await getDatabase();
-    
-    const existingDownload = database.prepare('SELECT metadata FROM downloads WHERE id = ?').get(downloadId);
-    let existingMetadata = {};
-    if (existingDownload && existingDownload.metadata) {
-      try {
-        existingMetadata = JSON.parse(existingDownload.metadata);
-      } catch {
-        // Ignore parse errors
-      }
-    }
-    
-    // If status is paused, update with pause reason and don't move to history
-    if (status.status === 'paused') {
-      const pausedMetadata = {
-        ...existingMetadata,
-        ...status,
-        pause_reason: status.pause_reason || status.message || 'Paused by user',
-        options: existingMetadata.options || {},
-      };
-      database.prepare('UPDATE downloads SET status = ?, metadata = ? WHERE id = ?').run(
-        'paused',
-        JSON.stringify(pausedMetadata),
-        downloadId
-      );
-      
-      // Send update to renderer
-      if (mainWindow && !mainWindow.isDestroyed()) {
-        mainWindow.webContents.send('download-update', {
-          ...updateData,
-          pause_reason: pausedMetadata.pause_reason,
-        });
-      }
-      return; // Don't process further - download is paused
-    }
-    
-    const updatedMetadata = {
-      ...existingMetadata,
-      ...status,
-      options: existingMetadata.options || {},
-    };
-    
-    const updateDownload = database.prepare(`
-      UPDATE downloads 
-      SET status = ?, progress = ?, downloaded = ?, total = ?, speed = ?, metadata = ?
-      WHERE id = ?
-    `);
-    updateDownload.run(
-      status.status || 'downloading',
-      status.progress || 0,
-      status.downloaded || 0,
-      status.total || 0,
-      status.speed || status.download_rate || 0,
-      JSON.stringify(updatedMetadata),
-      downloadId
-    );
-    
-    storeTorrentState(database, status, downloadId);
-    storeHttpState(database, status, downloadId);
-    
-    if (mainWindow && !mainWindow.isDestroyed()) {
-      mainWindow.webContents.send('download-update', updateData);
-    }
-  }
-
   proc.stdout.on('data', async (data) => {
     if (!isProcessActive) return;
     
     try {
       const line = data.toString().trim();
-      if (line.startsWith('{')) {
-        const status = JSON.parse(line);
-        await processStatusUpdate(status, downloadId);
+      if (line) {
+        if (line.startsWith('{')) {
+          try {
+            const status = JSON.parse(line);
+            await processStatusUpdate(status, downloadId);
+          } catch (parseError) {
+            console.warn(`[${downloadId}] Failed to parse JSON status:`, parseError.message);
+            console.warn(`[${downloadId}] Raw line:`, line);
+          }
+        }
       }
     } catch (error) {
       if (isProcessActive) {
-        try {
-          console.debug('Failed to parse status update:', error.message);
-        } catch (logError) {
-          if (logError.code !== 'EPIPE') {
-            // Only log if it's not an EPIPE error
-          }
-        }
+        console.error(`[${downloadId}] Error processing stdout:`, error.message);
+        console.error(`[${downloadId}] Error stack:`, error.stack);
       }
     }
   });
@@ -1566,26 +1673,48 @@ ipcMain.handle('start-download', async (event, { source, output, options }) => {
     try {
       const errorMsg = data.toString().trim();
       if (errorMsg) {
-        console.error(`Go error: ${errorMsg}`);
+        console.error(`Go stderr: ${errorMsg}`);
+        // Also send to renderer for user feedback
+        if (mainWindow && !mainWindow.isDestroyed()) {
+          mainWindow.webContents.send('download-update', {
+            downloadId,
+            error: errorMsg,
+          });
+        }
       }
     } catch (error) {
       // Ignore EPIPE errors from console - this is intentional
       if (error.code !== 'EPIPE') {
-        // Only log if it's not an EPIPE error
+        console.error('Error processing stderr:', error.message);
       }
     }
   });
 
-  proc.on('error', (error) => {
+  proc.on('error', async (error) => {
     isProcessActive = false;
+    console.error(`[${downloadId}] Failed to start Go process:`, error.message);
+    console.error(`[${downloadId}] Error code:`, error.code);
+    console.error(`[${downloadId}] Error stack:`, error.stack);
+    
+    // Update database
     try {
-      console.error(`Failed to start Go process: ${error.message}`);
-    } catch (logError) {
-      // Ignore EPIPE errors from console - this is intentional
-      if (logError.code !== 'EPIPE') {
-        // Only log if it's not an EPIPE error
+      const db = await getDatabase();
+      const updateStatus = db.prepare('UPDATE downloads SET status = ?, error = ? WHERE id = ?');
+      updateStatus.run('failed', error.message, downloadId);
+      
+      // Notify renderer
+      if (mainWindow && !mainWindow.isDestroyed()) {
+        mainWindow.webContents.send('download-update', {
+          downloadId,
+          status: 'failed',
+          error: error.message,
+        });
       }
+    } catch (dbError) {
+      console.error(`[${downloadId}] Failed to update database:`, dbError.message);
     }
+    
+    downloadProcesses.delete(downloadId);
   });
 
   // Helper function to move completed download to history
@@ -1621,8 +1750,37 @@ ipcMain.handle('start-download', async (event, { source, output, options }) => {
     }
   }
 
-  proc.on('close', async (code) => {
+  proc.on('close', async (code, signal) => {
     isProcessActive = false;
+    console.log(`[${downloadId}] Process closed with code ${code}${signal ? ` and signal ${signal}` : ''}`);
+    
+    if (code !== 0) {
+      console.error(`[${downloadId}] Process exited with non-zero code: ${code}`);
+      console.error(`[${downloadId}] Signal: ${signal || 'none'}`);
+      console.error(`[${downloadId}] This usually indicates the Go process encountered an error`);
+      
+      // Update database with error
+      try {
+        const db = await getDatabase();
+        const errorMsg = signal ? `Process killed by signal: ${signal}` : `Process exited with code: ${code}`;
+        const updateStatus = db.prepare('UPDATE downloads SET status = ?, error = ? WHERE id = ?');
+        updateStatus.run('failed', errorMsg, downloadId);
+        
+        // Notify renderer
+        if (mainWindow && !mainWindow.isDestroyed()) {
+          mainWindow.webContents.send('download-update', {
+            downloadId,
+            status: 'failed',
+            code,
+            signal,
+            error: errorMsg,
+          });
+        }
+      } catch (dbError) {
+        console.error(`[${downloadId}] Failed to update database:`, dbError.message);
+      }
+    }
+    
     downloadProcesses.delete(downloadId);
     
     // Remove event listeners to prevent further writes
@@ -1652,6 +1810,88 @@ ipcMain.handle('stop-download', async (event, downloadId) => {
   return { success: false };
 });
 
+ipcMain.handle('remove-download', async (event, downloadId) => {
+  // Stop process if running
+  const proc = downloadProcesses.get(downloadId);
+  if (proc) {
+    try {
+      proc.kill('SIGTERM');
+      await new Promise(resolve => setTimeout(resolve, 500));
+      if (!proc.killed) {
+        proc.kill('SIGKILL');
+      }
+    } catch (error) {
+      // Ignore errors
+    }
+    downloadProcesses.delete(downloadId);
+  }
+  
+  // Get download info before deleting from database
+  const db = await getDatabase();
+  const download = db.prepare('SELECT * FROM downloads WHERE id = ?').get(downloadId);
+  
+  // Delete from database
+  db.prepare('DELETE FROM downloads WHERE id = ?').run(downloadId);
+  
+  // Delete related state tables
+  db.prepare('DELETE FROM torrent_state WHERE download_id = ?').run(downloadId);
+  db.prepare('DELETE FROM http_state WHERE download_id = ?').run(downloadId);
+  
+  // Delete partial files
+  if (download) {
+    try {
+      const outputPath = download.output;
+      
+      // For HTTP downloads: delete temp directory (.accelara-temp-*)
+      if (download.type === 'http' && outputPath) {
+        const destDir = path.dirname(outputPath);
+        const fileName = path.basename(outputPath);
+        const tempDirName = `.accelara-temp-${fileName}`;
+        const tempDir = path.join(destDir, tempDirName);
+        
+        if (fs.existsSync(tempDir)) {
+          fs.rmSync(tempDir, { recursive: true, force: true });
+        }
+        
+        // Also check for incomplete file at output path (if download was incomplete)
+        if (fs.existsSync(outputPath)) {
+          const stats = fs.statSync(outputPath);
+          // If file is incomplete (smaller than expected total), delete it
+          if (download.total && stats.size < download.total) {
+            fs.unlinkSync(outputPath);
+          }
+        }
+      }
+      
+      // For torrent downloads: check if output is incomplete
+      if ((download.type === 'torrent' || download.type === 'magnet') && outputPath) {
+        // Torrent downloads write directly to output, so if incomplete, delete
+        if (fs.existsSync(outputPath)) {
+          const stats = fs.statSync(outputPath);
+          if (download.total && stats.size < download.total) {
+            if (stats.isDirectory()) {
+              // Directory - remove if incomplete
+              fs.rmSync(outputPath, { recursive: true, force: true });
+            } else {
+              // File - remove if incomplete
+              fs.unlinkSync(outputPath);
+            }
+          }
+        }
+      }
+    } catch (error) {
+      console.error(`Error deleting partial files for download ${downloadId}:`, error.message);
+    }
+  }
+  
+  // Notify renderer
+  if (mainWindow && !mainWindow.isDestroyed()) {
+    mainWindow.webContents.send('download-removed', { downloadId });
+  }
+  
+  return { success: true };
+});
+
 ipcMain.handle('pause-download', async (event, downloadId) => {
   const proc = downloadProcesses.get(downloadId);
   if (proc) {
@@ -1664,33 +1904,65 @@ ipcMain.handle('pause-download', async (event, downloadId) => {
       // Windows doesn't support SIGSTOP, so we'll need to track paused state
       // For now, just mark as paused in the database
     }
-    
-    // Update database status
-    try {
-      const db = await getDatabase();
-      db.prepare('UPDATE downloads SET status = ? WHERE id = ?').run('paused', downloadId);
+  }
+  
+  // Update database status with full metadata and current state
+  try {
+    const db = await getDatabase();
+    const download = db.prepare('SELECT * FROM downloads WHERE id = ?').get(downloadId);
+    if (download) {
+      const metadata = download.metadata ? JSON.parse(download.metadata) : {};
+      const updatedMetadata = {
+        ...metadata,
+        pause_reason: 'Paused by user',
+        paused_at: Date.now(),
+        // Preserve current state in metadata for restoration
+        progress: download.progress || 0,
+        downloaded: download.downloaded || 0,
+        total: download.total || 0,
+        speed: download.speed || 0,
+      };
+      
+      // Update both status and all current state fields
+      db.prepare(`
+        UPDATE downloads 
+        SET status = ?, metadata = ?, progress = ?, downloaded = ?, total = ?, speed = ?
+        WHERE id = ?
+      `).run(
+        'paused',
+        JSON.stringify(updatedMetadata),
+        download.progress || 0,
+        download.downloaded || 0,
+        download.total || 0,
+        download.speed || 0,
+        downloadId
+      );
       
       if (mainWindow && !mainWindow.isDestroyed()) {
         mainWindow.webContents.send('download-update', {
           download_id: downloadId,
           downloadId,
-          status: 'paused'
+          status: 'paused',
+          pause_reason: 'Paused by user',
+          progress: download.progress || 0,
+          downloaded: download.downloaded || 0,
+          total: download.total || 0,
+          speed: download.speed || 0,
+          ...updatedMetadata,
         });
       }
-    } catch (error) {
-      // Ignore errors - this is intentional
-      if (error.code && error.code !== 'EPIPE') {
-        // Only log if it's not an expected error
-      }
     }
-    
-    return { success: true };
+  } catch (error) {
+    console.error('Error pausing download:', error.message);
   }
-  return { success: false };
+  
+  return { success: true };
 });
 
 ipcMain.handle('resume-download', async (event, downloadId) => {
   const proc = downloadProcesses.get(downloadId);
+  
+  // If process exists, resume it
   if (proc) {
     // Send SIGCONT to resume the process (Unix-like systems)
     const isUnix = process.platform !== 'win32';
@@ -1711,15 +1983,101 @@ ipcMain.handle('resume-download', async (event, downloadId) => {
         });
       }
     } catch (error) {
-      // Ignore errors - this is intentional
-      if (error.code && error.code !== 'EPIPE') {
-        // Only log if it's not an expected error
-      }
+      console.error('Error resuming download:', error.message);
     }
     
     return { success: true };
   }
-  return { success: false };
+  
+  // Process doesn't exist (e.g., after app restart) - restart the download
+  try {
+    const db = await getDatabase();
+    const download = db.prepare('SELECT * FROM downloads WHERE id = ?').get(downloadId);
+    
+    if (!download) {
+      return { success: false, error: 'Download not found' };
+    }
+    
+    if (download.status !== 'paused') {
+      return { success: false, error: 'Download is not paused' };
+    }
+    
+    const metadata = download.metadata ? JSON.parse(download.metadata) : {};
+    const options = metadata.options || {};
+    
+    const args = buildCommandArgs(download.source, download.output, download.id, options);
+    const goBinary = verifyAndNormalizeBinary(findGoBinary());
+    
+    // For cwd, we need a real directory, not inside ASAR
+    let workingDir;
+    if (app.isPackaged) {
+      workingDir = os.homedir();
+    } else {
+      workingDir = path.join(__dirname, '..');
+    }
+    
+    const newProc = spawn(goBinary, args, {
+      cwd: workingDir,
+      env: { ...process.env }
+    });
+    
+    downloadProcesses.set(download.id, newProc);
+    setupRestartedDownloadHandlers(newProc, download.id, metadata, download);
+    
+    // Update database status
+    db.prepare('UPDATE downloads SET status = ? WHERE id = ?').run('downloading', downloadId);
+    
+    if (mainWindow && !mainWindow.isDestroyed()) {
+      mainWindow.webContents.send('download-update', {
+        download_id: downloadId,
+        downloadId,
+        status: 'downloading'
+      });
+    }
+    
+    return { success: true };
+  } catch (error) {
+    console.error('Error restarting paused download:', error.message);
+    return { success: false, error: error.message };
+  }
+});
+
+ipcMain.handle('get-active-downloads', async () => {
+  const db = await getDatabase();
+  const activeDownloads = db.prepare(`
+    SELECT * FROM downloads 
+    WHERE status NOT IN ('completed', 'failed', 'cancelled')
+    ORDER BY started_at DESC
+  `).all();
+  
+  return activeDownloads.map(download => {
+    const metadata = download.metadata ? JSON.parse(download.metadata) : {};
+    return {
+      id: download.id,
+      downloadId: download.id,
+      download_id: download.id,
+      source: download.source,
+      output: download.output,
+      type: download.type,
+      status: download.status,
+      // Use database values first, fallback to metadata
+      progress: download.progress !== null && download.progress !== undefined ? download.progress : (metadata.progress || 0),
+      downloaded: download.downloaded !== null && download.downloaded !== undefined ? download.downloaded : (metadata.downloaded || 0),
+      total: download.total !== null && download.total !== undefined ? download.total : (metadata.total || 0),
+      speed: download.speed !== null && download.speed !== undefined ? download.speed : (metadata.speed || metadata.download_rate || 0),
+      pause_reason: metadata.pause_reason || (download.status === 'paused' ? 'Paused' : undefined),
+      // Include all metadata fields for complete state restoration
+      ...metadata,
+      // Preserve torrent-specific fields if present
+      torrent_name: metadata.torrent_name,
+      file_progress: metadata.file_progress,
+      peers: metadata.peers,
+      seeds: metadata.seeds,
+      // Preserve HTTP-specific fields if present
+      chunk_progress: metadata.chunk_progress,
+      speedHistory: metadata.speedHistory || [],
+    };
+  });
 });
 
 ipcMain.handle('get-download-history', async () => {
@@ -1741,6 +2099,189 @@ ipcMain.handle('clear-download-history', async () => {
   const db = await getDatabase();
   db.prepare('DELETE FROM download_history').run();
   return { success: true };
+});
+
+// Helper function to calculate directory size recursively
+function calculateDirSize(dirPath) {
+  let totalSize = 0;
+  try {
+    const files = fs.readdirSync(dirPath);
+    for (const file of files) {
+      const filePath = path.join(dirPath, file);
+      try {
+        const stats = fs.statSync(filePath);
+        if (stats.isDirectory()) {
+          totalSize += calculateDirSize(filePath);
+        } else {
+          totalSize += stats.size;
+        }
+      } catch (err) {
+        // Skip files we can't access
+      }
+    }
+  } catch (err) {
+    // Skip directories we can't access
+  }
+  return totalSize;
+}
+
+// Helper function to format bytes
+function formatBytes(bytes) {
+  if (bytes === 0) return '0 B';
+  const k = 1024;
+  const sizes = ['B', 'KB', 'MB', 'GB', 'TB'];
+  const i = Math.floor(Math.log(bytes) / Math.log(k));
+  return `${(bytes / Math.pow(k, i)).toFixed(2)} ${sizes[i]}`;
+}
+
+ipcMain.handle('get-junk-data-size', async () => {
+  let totalSize = 0;
+  const junkPaths = [];
+  
+  try {
+    // Get default download path
+    const db = await getDatabase();
+    const defaultSettings = getDefaultSettings();
+    const settings = db.prepare('SELECT key, value FROM settings').all();
+    const dbSettings = {};
+    for (const row of settings) {
+      try {
+        dbSettings[row.key] = JSON.parse(row.value);
+      } catch {
+        dbSettings[row.key] = row.value;
+      }
+    }
+    const downloadPath = dbSettings.defaultDownloadPath || defaultSettings.defaultDownloadPath || os.homedir() + '/Downloads';
+    
+    // Scan for .accelara-temp-* directories
+    if (fs.existsSync(downloadPath)) {
+      try {
+        const entries = fs.readdirSync(downloadPath, { withFileTypes: true });
+        for (const entry of entries) {
+          if (entry.isDirectory() && entry.name.startsWith('.accelara-temp-')) {
+            const tempDir = path.join(downloadPath, entry.name);
+            const size = calculateDirSize(tempDir);
+            totalSize += size;
+            junkPaths.push(tempDir);
+          }
+        }
+      } catch (err) {
+        // Skip if we can't read directory
+      }
+    }
+    
+    // Also scan common download locations
+    const commonPaths = [
+      os.homedir() + '/Downloads',
+      os.homedir() + '/Desktop',
+    ];
+    
+    for (const commonPath of commonPaths) {
+      if (fs.existsSync(commonPath) && commonPath !== downloadPath) {
+        try {
+          const entries = fs.readdirSync(commonPath, { withFileTypes: true });
+          for (const entry of entries) {
+            if (entry.isDirectory() && entry.name.startsWith('.accelara-temp-')) {
+              const tempDir = path.join(commonPath, entry.name);
+              const size = calculateDirSize(tempDir);
+              totalSize += size;
+              junkPaths.push(tempDir);
+            }
+          }
+        } catch (err) {
+          // Skip if we can't read directory
+        }
+      }
+    }
+  } catch (error) {
+    console.error('Error calculating junk data size:', error.message);
+  }
+  
+  return {
+    size: totalSize,
+    sizeFormatted: formatBytes(totalSize),
+    paths: junkPaths.length,
+  };
+});
+
+ipcMain.handle('clear-junk-data', async () => {
+  let deletedSize = 0;
+  let deletedCount = 0;
+  
+  try {
+    // Get default download path
+    const db = await getDatabase();
+    const defaultSettings = getDefaultSettings();
+    const settings = db.prepare('SELECT key, value FROM settings').all();
+    const dbSettings = {};
+    for (const row of settings) {
+      try {
+        dbSettings[row.key] = JSON.parse(row.value);
+      } catch {
+        dbSettings[row.key] = row.value;
+      }
+    }
+    const downloadPath = dbSettings.defaultDownloadPath || defaultSettings.defaultDownloadPath || os.homedir() + '/Downloads';
+    
+    // Function to delete temp directory and calculate size
+    const deleteTempDir = (tempDir) => {
+      try {
+        const size = calculateDirSize(tempDir);
+        fs.rmSync(tempDir, { recursive: true, force: true });
+        deletedSize += size;
+        deletedCount++;
+      } catch (err) {
+        // Skip if we can't delete
+      }
+    };
+    
+    // Scan for .accelara-temp-* directories in download path
+    if (fs.existsSync(downloadPath)) {
+      try {
+        const entries = fs.readdirSync(downloadPath, { withFileTypes: true });
+        for (const entry of entries) {
+          if (entry.isDirectory() && entry.name.startsWith('.accelara-temp-')) {
+            const tempDir = path.join(downloadPath, entry.name);
+            deleteTempDir(tempDir);
+          }
+        }
+      } catch (err) {
+        // Skip if we can't read directory
+      }
+    }
+    
+    // Also scan common download locations
+    const commonPaths = [
+      os.homedir() + '/Downloads',
+      os.homedir() + '/Desktop',
+    ];
+    
+    for (const commonPath of commonPaths) {
+      if (fs.existsSync(commonPath) && commonPath !== downloadPath) {
+        try {
+          const entries = fs.readdirSync(commonPath, { withFileTypes: true });
+          for (const entry of entries) {
+            if (entry.isDirectory() && entry.name.startsWith('.accelara-temp-')) {
+              const tempDir = path.join(commonPath, entry.name);
+              deleteTempDir(tempDir);
+            }
+          }
+        } catch (err) {
+          // Skip if we can't read directory
+        }
+      }
+    }
+  } catch (error) {
+    console.error('Error clearing junk data:', error.message);
+    return { success: false, error: error.message, deletedSize: 0, deletedSizeFormatted: '0 B' };
+  }
+  
+  return {
+    success: true,
+    deletedSize,
+    deletedSizeFormatted: formatBytes(deletedSize),
+    deletedCount,
+  };
 });
 
 ipcMain.handle('save-speed-test-result', async (event, result) => {
@@ -2061,6 +2602,7 @@ function getDefaultSettings() {
     readTimeout: 60,
     retries: 5,
     defaultDownloadPath: path.join(os.homedir(), 'Downloads'),
+    torrentPort: 42069, // Default BitTorrent port
   };
 }
 

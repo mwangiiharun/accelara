@@ -72,6 +72,13 @@ Oh, and I also built a **fancy Electron GUI** because apparently typing commands
 - ✅ **Progress Bars** - Visual progress indicators. Watching text scroll is so 1990s.
 - ✅ **Quiet Mode** - Suppress output for scripting. Automation is the future.
 - ✅ **Graceful Interruption** - CTRL+C support with resume capability. Accidents happen.
+- ✅ **Pause/Resume** - Pause downloads anytime and resume later. Control is power.
+- ✅ **Persistent State** - Downloads persist across app restarts. Your downloads survive crashes.
+- ✅ **Auto-Pause on Exit** - All active downloads automatically pause when you close the app. No surprises.
+- ✅ **Storage Cleanup** - Clear junk partial files with one click. See how much space you'll free up.
+- ✅ **Duplicate Prevention** - Smart duplicate detection prevents multiple downloads of the same file.
+- ✅ **File Associations** - Double-click `.torrent` files or `magnet:` links to start downloads.
+- ✅ **Configurable Torrent Port** - Set your preferred BitTorrent port with automatic fallback.
 
 ---
 

@@ -119,6 +119,7 @@ export default function AddDownloadModal({ onClose, initialSource = '' }) {
         bt_upload_limit: settings.uploadLimit,
         bt_sequential: settings.sequentialMode,
         bt_keep_seeding: settings.keepSeeding || false,
+        bt_port: settings.torrentPort || 42069,
         connect_timeout: settings.connectTimeout,
         read_timeout: settings.readTimeout,
         retries: settings.retries,

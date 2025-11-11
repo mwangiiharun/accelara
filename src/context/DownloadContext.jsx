@@ -25,8 +25,25 @@ export function DownloadProvider({ children }) {
   });
 
   useEffect(() => {
-    // Load history
+    // Load active downloads (including paused) and history on startup
     if (window.electronAPI) {
+      // Load active downloads (including paused)
+      window.electronAPI.getActiveDownloads()
+        .then((activeDownloads) => {
+          // Deduplicate by ID before setting
+          const uniqueDownloads = activeDownloads.reduce((acc, download) => {
+            if (!acc.find((d) => d.id === download.id)) {
+              acc.push(download);
+            }
+            return acc;
+          }, []);
+          setDownloads(uniqueDownloads);
+        })
+        .catch((error) => {
+          console.error('Failed to load active downloads:', error);
+        });
+      
+      // Load history
       window.electronAPI.getDownloadHistory()
         .then(setHistory)
         .catch((error) => {
@@ -39,8 +56,18 @@ export function DownloadProvider({ children }) {
       const updateHandler = (data) => {
         setDownloads((prev) => {
           const downloadId = data.download_id || data.downloadId;
+          if (!downloadId) {
+            return prev; // Skip if no download ID
+          }
+          
           const existing = prev.find((d) => d.id === downloadId);
           if (existing) {
+            // If download is paused, don't allow status updates to change it to downloading
+            if (existing.status === 'paused' && data.status && data.status !== 'paused') {
+              // Ignore status updates that would change paused to another status
+              return prev;
+            }
+            
             const updated = { 
               ...existing, 
               ...data,
@@ -108,6 +135,33 @@ export function DownloadProvider({ children }) {
             }
             
             return prev.map((d) => (d.id === downloadId ? updated : d));
+          } else {
+            // Download doesn't exist in state - add it (e.g., from reattachToDownloads)
+            // Only add if it has required fields
+            if (data.source && data.status) {
+              const newDownload = {
+                id: downloadId,
+                downloadId: downloadId,
+                download_id: downloadId,
+                source: data.source,
+                output: data.output || '',
+                type: data.type || (data.source.startsWith('magnet:') ? 'magnet' : data.source.endsWith('.torrent') ? 'torrent' : 'http'),
+                status: data.status,
+                progress: data.progress || 0,
+                downloaded: data.downloaded || 0,
+                total: data.total || 0,
+                speed: data.speed || data.download_rate || 0,
+                eta: data.eta || 0,
+                speedHistory: data.speedHistory || [],
+                peers: data.peers || 0,
+                seeds: data.seeds || 0,
+                ...data,
+              };
+              // Check if it's already in the list (by ID) to prevent duplicates
+              if (!prev.find((d) => d.id === downloadId)) {
+                return [...prev, newDownload];
+              }
+            }
           }
           return prev;
         });
@@ -160,28 +214,62 @@ export function DownloadProvider({ children }) {
       return null;
     }
 
+    // Check if download already exists in state to prevent duplicates
+    let existingDownloadId = null;
+    setDownloads((prev) => {
+      const existing = prev.find((d) => 
+        d.source === source && 
+        (d.output === output || (!output && !d.output))
+      );
+      if (existing && (existing.status === 'downloading' || existing.status === 'initializing' || existing.status === 'paused')) {
+        // Download already exists and is active - reuse existing ID
+        existingDownloadId = existing.id;
+        return prev;
+      }
+      return prev;
+    });
+
+    // If download already exists, return its ID without starting a new one
+    if (existingDownloadId) {
+      return existingDownloadId;
+    }
+
     const result = await window.electronAPI.startDownload({
       source,
       output,
       options,
     });
 
-    const newDownload = {
-      id: result.downloadId,
-      source,
-      output,
-      type: source.startsWith('magnet:') ? 'magnet' : source.endsWith('.torrent') ? 'torrent' : 'http',
-      status: 'initializing',
-      progress: 0,
-      speed: 0,
-      eta: 0,
-      speedHistory: [],
-      peers: 0,
-      seeds: 0,
-      ...options,
-    };
-
-    setDownloads((prev) => [...prev, newDownload]);
+    // Check again after starting to prevent duplicate in state
+    setDownloads((prev) => {
+      // If download already exists (from updateHandler or getActiveDownloads), update it instead of adding
+      const existing = prev.find((d) => d.id === result.downloadId);
+      if (existing) {
+        return prev.map((d) => 
+          d.id === result.downloadId 
+            ? { ...d, status: 'initializing', source, output, ...options }
+            : d
+        );
+      }
+      
+      // Add new download only if it doesn't exist
+      const newDownload = {
+        id: result.downloadId,
+        source,
+        output,
+        type: source.startsWith('magnet:') ? 'magnet' : source.endsWith('.torrent') ? 'torrent' : 'http',
+        status: 'initializing',
+        progress: 0,
+        speed: 0,
+        eta: 0,
+        speedHistory: [],
+        peers: 0,
+        seeds: 0,
+        ...options,
+      };
+      return [...prev, newDownload];
+    });
+    
     return result.downloadId;
   }, []);
 
@@ -206,12 +294,19 @@ export function DownloadProvider({ children }) {
     }
   }, []);
 
+  const removeDownload = useCallback(async (downloadId) => {
+    if (window.electronAPI) {
+      await window.electronAPI.removeDownload(downloadId);
+      setDownloads((prev) => prev.filter((d) => d.id !== downloadId));
+    }
+  }, []);
+
   const clearHistory = useCallback(() => {
     setHistory([]);
   }, []);
 
   return (
-    <DownloadContext.Provider value={{ downloads, history, stats, startDownload, stopDownload, pauseDownload, resumeDownload, clearHistory }}>
+    <DownloadContext.Provider value={{ downloads, history, stats, startDownload, stopDownload, pauseDownload, resumeDownload, removeDownload, clearHistory }}>
       {children}
     </DownloadContext.Provider>
   );

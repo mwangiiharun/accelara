@@ -8,7 +8,11 @@ export interface ElectronAPI {
   stopDownload: (downloadId: string) => Promise<{ success: boolean }>;
   pauseDownload: (downloadId: string) => Promise<{ success: boolean }>;
   resumeDownload: (downloadId: string) => Promise<{ success: boolean }>;
+  removeDownload: (downloadId: string) => Promise<{ success: boolean }>;
+  getJunkDataSize: () => Promise<{ size: number; sizeFormatted: string }>;
+  clearJunkData: () => Promise<{ success: boolean; deletedSize: number; deletedSizeFormatted: string }>;
   
+  getActiveDownloads: () => Promise<any[]>;
   getDownloadHistory: () => Promise<any[]>;
   clearDownloadHistory: () => Promise<{ success: boolean }>;
   inspectTorrent: (source: string) => Promise<{

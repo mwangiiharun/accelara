@@ -1,10 +1,13 @@
 import { useState, useEffect } from 'react';
 import { useSettings } from '../context/SettingsContext';
-import { Sun, Monitor, Sparkles, Folder, Check } from 'lucide-react';
+import { Sun, Monitor, Sparkles, Folder, Check, Trash2, Loader2 } from 'lucide-react';
 
 export default function SettingsPanel() {
   const { settings, updateSettings } = useSettings();
   const [applyFeedback, setApplyFeedback] = useState(false);
+  const [junkDataSize, setJunkDataSize] = useState(null);
+  const [isLoadingJunk, setIsLoadingJunk] = useState(false);
+  const [isClearingJunk, setIsClearingJunk] = useState(false);
   
   // Local state for text inputs that require Apply button
   const [localSettings, setLocalSettings] = useState({
@@ -15,6 +18,7 @@ export default function SettingsPanel() {
     connectTimeout: 15,
     readTimeout: 60,
     retries: 5,
+    torrentPort: 42069,
   });
   
   // Initialize local settings from loaded settings
@@ -27,8 +31,49 @@ export default function SettingsPanel() {
       connectTimeout: settings.connectTimeout || 15,
       readTimeout: settings.readTimeout || 60,
       retries: settings.retries || 5,
+      torrentPort: settings.torrentPort || 42069,
     });
+    
+    // Load junk data size on mount
+    loadJunkDataSize();
   }, [settings]);
+  
+  const loadJunkDataSize = async () => {
+    if (window.electronAPI) {
+      setIsLoadingJunk(true);
+      try {
+        const result = await window.electronAPI.getJunkDataSize();
+        setJunkDataSize(result);
+      } catch (error) {
+        console.error('Failed to load junk data size:', error);
+      } finally {
+        setIsLoadingJunk(false);
+      }
+    }
+  };
+  
+  const handleClearJunkData = async () => {
+    if (!window.electronAPI || !confirm(`Are you sure you want to delete all junk data? This will remove ${junkDataSize?.sizeFormatted || 'unknown amount'} of partial download files.`)) {
+      return;
+    }
+    
+    setIsClearingJunk(true);
+    try {
+      const result = await window.electronAPI.clearJunkData();
+      if (result.success) {
+        alert(`Successfully deleted ${result.deletedSizeFormatted} of junk data (${result.deletedCount} items)`);
+        // Reload junk data size
+        await loadJunkDataSize();
+      } else {
+        alert(`Failed to clear junk data: ${result.error || 'Unknown error'}`);
+      }
+    } catch (error) {
+      console.error('Failed to clear junk data:', error);
+      alert('Failed to clear junk data');
+    } finally {
+      setIsClearingJunk(false);
+    }
+  };
 
   // Auto-save for theme and concurrency
   const handleAutoSaveChange = (key, value) => {
@@ -257,6 +302,30 @@ export default function SettingsPanel() {
           />
         </div>
       </div>
+
+      {/* BitTorrent Settings */}
+      <div>
+        <label className="block text-sm font-medium theme-text-secondary mb-2">
+          BitTorrent Port
+        </label>
+        <div className="flex gap-2 items-center">
+          <input
+            type="number"
+            value={localSettings.torrentPort}
+            onChange={(e) => handleLocalChange('torrentPort', parseInt(e.target.value) || 42069)}
+            className="input-field flex-1"
+            min="1024"
+            max="65535"
+            placeholder="42069"
+          />
+          <span className="text-xs theme-text-tertiary whitespace-nowrap">
+            Default: 42069
+          </span>
+        </div>
+        <p className="text-xs theme-text-tertiary mt-1">
+          Port for BitTorrent connections. If unavailable, will try next 4 ports automatically.
+        </p>
+      </div>
       
       {/* Apply Button for Text Inputs */}
       <div className="pt-4 border-t theme-border">
@@ -274,6 +343,63 @@ export default function SettingsPanel() {
         <p className="text-xs theme-text-tertiary mt-2 text-center">
           Theme and concurrency auto-save. Other settings require Apply.
         </p>
+      </div>
+      
+      {/* Clear Junk Data */}
+      <div className="pt-4 border-t theme-border">
+        <div className="mb-3">
+          <h3 className="text-sm font-medium theme-text-primary mb-2">Storage Cleanup</h3>
+          <p className="text-xs theme-text-tertiary mb-3">
+            Remove partial download files and temporary data accumulated from incomplete downloads.
+          </p>
+          {isLoadingJunk ? (
+            <div className="flex items-center gap-2 text-sm theme-text-secondary">
+              <Loader2 className="w-4 h-4 animate-spin" />
+              <span>Calculating junk data size...</span>
+            </div>
+          ) : junkDataSize ? (
+            <div className="mb-3">
+              <div className="flex items-center justify-between mb-2">
+                <span className="text-sm theme-text-secondary">Junk Data Found:</span>
+                <span className="text-sm font-medium theme-text-primary">
+                  {junkDataSize.sizeFormatted}
+                </span>
+              </div>
+              {junkDataSize.paths > 0 && (
+                <p className="text-xs theme-text-tertiary">
+                  {junkDataSize.paths} temporary {junkDataSize.paths === 1 ? 'directory' : 'directories'} found
+                </p>
+              )}
+            </div>
+          ) : null}
+          <button
+            onClick={handleClearJunkData}
+            disabled={isClearingJunk || isLoadingJunk || !junkDataSize || junkDataSize.size === 0}
+            className={`w-full flex items-center justify-center gap-2 px-4 py-2 rounded-lg transition-colors ${
+              isClearingJunk || isLoadingJunk || !junkDataSize || junkDataSize.size === 0
+                ? 'bg-gray-500/20 text-gray-500 cursor-not-allowed'
+                : 'bg-red-500/20 hover:bg-red-500/30 text-red-500 dark:text-red-400'
+            }`}
+            type="button"
+          >
+            {isClearingJunk ? (
+              <>
+                <Loader2 className="w-4 h-4 animate-spin" />
+                <span>Clearing...</span>
+              </>
+            ) : (
+              <>
+                <Trash2 className="w-4 h-4" />
+                <span>Clear Junk Data</span>
+              </>
+            )}
+          </button>
+          {junkDataSize && junkDataSize.size === 0 && (
+            <p className="text-xs theme-text-tertiary mt-2 text-center">
+              No junk data found
+            </p>
+          )}
+        </div>
       </div>
     </div>
   );
