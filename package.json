@@ -1,14 +1,15 @@
 {
   "name": "accelara",
-  "version": "2.1.1",
+  "version": "2.2.1",
   "type": "commonjs",
   "description": "ACCELARA - Unified HTTP + BitTorrent CLI Download Manager with Electron GUI",
   "main": "electron/main.js",
+  "productName": "ACCELARA",
   "scripts": {
     "dev": "make build-api && concurrently \"npm run dev:react\" \"npm run dev:electron\"",
     "dev:react": "vite",
     "dev:electron": "wait-on http://localhost:5173 && electron .",
-    "build": "make build-api && vite build && electron-builder",
+    "build": "make build-api && vite build && electron-builder --mac --dir --publish never && node scripts/createDMG.js",
     "build:react": "vite build",
     "build:go": "make build",
     "preview": "vite preview",
@@ -22,7 +23,6 @@
   ],
   "author": "Mwangii Kinuthia",
   "license": "MIT",
-
   "devDependencies": {
     "@types/node": "^20.19.24",
     "@types/react": "^18.3.26",
@@ -32,6 +32,7 @@
     "concurrently": "^9.2.1",
     "electron": "^39.1.1",
     "electron-builder": "^26.0.12",
+    "plist": "^3.1.0",
     "postcss": "^8.4.47",
     "tailwindcss": "^3.4.18",
     "typescript": "^5.7.2",

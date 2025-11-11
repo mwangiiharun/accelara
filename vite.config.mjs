@@ -17,5 +17,7 @@ export default defineConfig({
   build: {
     outDir: 'dist',
   },
+  // Use relative paths for Electron file:// protocol
+  base: './',
 });
 

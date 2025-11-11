@@ -53,5 +53,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
     ipcRenderer.removeAllListeners('speed-test-complete');
     ipcRenderer.removeAllListeners('speed-test-error');
   },
+  
+  focusWindow: () => ipcRenderer.invoke('focus-window'),
 });
 

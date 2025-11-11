@@ -4,16 +4,23 @@ import { useSettings } from '../context/SettingsContext';
 import { X, File, Folder, Loader2, AlertCircle } from 'lucide-react';
 import { formatBytes } from '../utils/format';
 
-export default function AddDownloadModal({ onClose }) {
+export default function AddDownloadModal({ onClose, initialSource = '' }) {
   const { startDownload } = useDownloads();
   const { settings } = useSettings();
-  const [source, setSource] = useState('');
+  const [source, setSource] = useState(initialSource);
   const [output, setOutput] = useState('');
   const [loading, setLoading] = useState(false);
   const [inspecting, setInspecting] = useState(false);
   const [torrentInfo, setTorrentInfo] = useState(null);
   const [httpInfo, setHttpInfo] = useState(null);
   const [inspectError, setInspectError] = useState(null);
+
+  // Update source when initialSource changes (e.g., from external click)
+  useEffect(() => {
+    if (initialSource) {
+      setSource(initialSource);
+    }
+  }, [initialSource]);
 
   useEffect(() => {
     // Set default download path from settings

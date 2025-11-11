@@ -10,6 +10,7 @@ function AppContent({ startDownload }) {
   const { settings, updateSettings, effectiveTheme } = useSettings();
   const { showToast } = useToast();
   const [showAddModal, setShowAddModal] = useState(false);
+  const [modalInitialSource, setModalInitialSource] = useState('');
 
   useEffect(() => {
     // Remove all theme classes
@@ -35,20 +36,16 @@ function AppContent({ startDownload }) {
 
   useEffect(() => {
     // Listen for external downloads (magnet links, torrent files)
+    // Open the download modal with the source pre-filled instead of starting directly
     if (window.electronAPI) {
       const handleExternalDownload = async (data) => {
-        const { settings } = await window.electronAPI.getSettings();
-        await startDownload(data.source, undefined, {
-          concurrency: settings.concurrency,
-          chunk_size: settings.chunkSize,
-          limit: settings.rateLimit,
-          bt_upload_limit: settings.uploadLimit,
-          bt_sequential: settings.sequentialMode,
-          bt_keep_seeding: settings.keepSeeding || false,
-          connect_timeout: settings.connectTimeout,
-          read_timeout: settings.readTimeout,
-          retries: settings.retries,
-        });
+        // Set the initial source and open the modal
+        setModalInitialSource(data.source);
+        setShowAddModal(true);
+        // Ensure window is visible and focused
+        if (window.electronAPI.focusWindow) {
+          await window.electronAPI.focusWindow();
+        }
       };
 
       window.electronAPI.onExternalDownload(handleExternalDownload);
@@ -57,7 +54,7 @@ function AppContent({ startDownload }) {
         window.electronAPI.removeListeners('external-download');
       };
     }
-  }, [startDownload]);
+  }, []);
 
   return (
     <>
@@ -67,7 +64,15 @@ function AppContent({ startDownload }) {
           <Dashboard onAddDownload={() => setShowAddModal(true)} />
         </div>
       </div>
-      {showAddModal && <AddDownloadModal onClose={() => setShowAddModal(false)} />}
+      {showAddModal && (
+        <AddDownloadModal 
+          onClose={() => {
+            setShowAddModal(false);
+            setModalInitialSource(''); // Clear initial source when closing
+          }} 
+          initialSource={modalInitialSource}
+        />
+      )}
     </>
   );
 }
