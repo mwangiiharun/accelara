@@ -327,30 +327,42 @@ jobs:
             fi
             
             # Install AppImageTool if not available (required for AppImage creation)
-            # Extract the AppImage to avoid FUSE requirement
+            # Use unsquashfs to extract AppImage if available, otherwise let electron-builder handle it
             if ! command -v appimagetool &> /dev/null; then
               echo "Installing AppImageTool..."
-              wget -q https://github.com/AppImage/AppImageKit/releases/download/continuous/appimagetool-x86_64.AppImage -O /tmp/appimagetool.AppImage
-              chmod +x /tmp/appimagetool.AppImage
               
-              # Extract AppImage to avoid FUSE requirement
-              echo "Extracting AppImageTool..."
-              /tmp/appimagetool.AppImage --appimage-extract > /dev/null 2>&1 || {
-                # Alternative: try to extract manually
+              # Check if unsquashfs is available for extraction
+              if command -v unsquashfs &> /dev/null; then
+                echo "Using unsquashfs to extract AppImageTool..."
+                wget -q https://github.com/AppImage/AppImageKit/releases/download/continuous/appimagetool-x86_64.AppImage -O /tmp/appimagetool.AppImage
+                chmod +x /tmp/appimagetool.AppImage
+                
+                # Extract using unsquashfs (no FUSE needed)
                 cd /tmp
-                ./appimagetool.AppImage --appimage-extract-and-run --help > /dev/null 2>&1 || true
-              }
-              
-              # Find the extracted binary
-              if [ -f "/tmp/squashfs-root/AppRun" ]; then
-                # Use the extracted AppRun as appimagetool
-                mkdir -p ~/.local/bin
-                ln -sf /tmp/squashfs-root/AppRun ~/.local/bin/appimagetool
-                export PATH="$HOME/.local/bin:$PATH"
-                echo "✓ AppImageTool extracted and installed"
+                unsquashfs -d squashfs-root appimagetool.AppImage > /dev/null 2>&1 || {
+                  echo "⚠ unsquashfs extraction failed, trying alternative method..."
+                  # Try the AppImage's own extraction
+                  ./appimagetool.AppImage --appimage-extract > /dev/null 2>&1 || true
+                }
+                
+                # Find the extracted binary
+                if [ -f "/tmp/squashfs-root/AppRun" ]; then
+                  mkdir -p ~/.local/bin
+                  ln -sf /tmp/squashfs-root/AppRun ~/.local/bin/appimagetool
+                  export PATH="$HOME/.local/bin:$PATH"
+                  echo "✓ AppImageTool extracted and installed at ~/.local/bin/appimagetool"
+                elif [ -f "/tmp/squashfs-root/appimagetool" ]; then
+                  mkdir -p ~/.local/bin
+                  ln -sf /tmp/squashfs-root/appimagetool ~/.local/bin/appimagetool
+                  export PATH="$HOME/.local/bin:$PATH"
+                  echo "✓ AppImageTool extracted and installed at ~/.local/bin/appimagetool"
+                else
+                  echo "⚠ Could not find extracted binary, electron-builder will download its own"
+                fi
+                cd - > /dev/null
               else
-                # Fallback: try to use electron-builder's own AppImageTool
-                echo "⚠ Could not extract AppImageTool, electron-builder will download its own"
+                echo "⚠ unsquashfs not available - electron-builder will download AppImageTool automatically"
+                echo "  (This is normal - electron-builder has its own AppImageTool download mechanism)"
               fi
             fi
             
@@ -358,10 +370,8 @@ jobs:
             echo "Verifying appimagetool installation..."
             if command -v appimagetool &> /dev/null; then
               echo "✓ appimagetool found at: $(which appimagetool)"
-              # Try to get version (may fail if FUSE is needed, but that's OK for building)
-              appimagetool --version 2>&1 || echo "⚠ Version check failed (may need FUSE to run, but OK for building)"
             else
-              echo "⚠ appimagetool not in PATH - electron-builder will download its own"
+              echo "⚠ appimagetool not in PATH - electron-builder will download its own (this is OK)"
             fi
             
             echo "Running electron-builder for Linux..."
@@ -425,13 +435,15 @@ jobs:
                 if [ -n "$UNPACKED_DIR" ]; then
                   echo "  Found unpacked directory: $UNPACKED_DIR"
                   
-                  # Try to use extracted appimagetool
-                  APPIMAGETOOL_CMD=""
-                  if [ -f "/tmp/squashfs-root/AppRun" ]; then
-                    APPIMAGETOOL_CMD="/tmp/squashfs-root/AppRun"
-                  elif command -v appimagetool &> /dev/null; then
-                    APPIMAGETOOL_CMD="appimagetool"
-                  fi
+          # Try to use extracted appimagetool
+          APPIMAGETOOL_CMD=""
+          if [ -f "/tmp/squashfs-root/AppRun" ]; then
+            APPIMAGETOOL_CMD="/tmp/squashfs-root/AppRun"
+          elif [ -f "/tmp/squashfs-root/appimagetool" ]; then
+            APPIMAGETOOL_CMD="/tmp/squashfs-root/appimagetool"
+          elif command -v appimagetool &> /dev/null; then
+            APPIMAGETOOL_CMD="appimagetool"
+          fi
                   
                   if [ -n "$APPIMAGETOOL_CMD" ]; then
                     echo "  Creating AppImage manually using: $APPIMAGETOOL_CMD"
