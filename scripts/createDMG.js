@@ -283,55 +283,72 @@ if (!fs.existsSync(asarPath)) {
       process.exit(1);
     }
     
-    // Try to find asar binary - prefer local node_modules, then system paths, then npx
-    let asarBinary = null;
-    const localAsar = path.join(projectDir, 'node_modules', '.bin', 'asar');
-    const localElectronAsar = path.join(projectDir, 'node_modules', '.bin', 'electron-asar');
-    if (fs.existsSync(localAsar)) {
-      asarBinary = localAsar;
-      console.log('Using local asar from node_modules');
-    } else if (fs.existsSync(localElectronAsar)) {
-      asarBinary = localElectronAsar;
-      console.log('Using local @electron/asar from node_modules');
-    } else {
-      // Try system paths
-      const systemPaths = ['/opt/homebrew/bin/asar', '/usr/local/bin/asar'];
-      for (const sysPath of systemPaths) {
-        if (fs.existsSync(sysPath)) {
-          asarBinary = sysPath;
-          console.log('Using system asar:', sysPath);
-          break;
-        }
+    // Try to use programmatic API first (works with any Node version)
+    let useProgrammaticAPI = false;
+    try {
+      const asarModule = require('@electron/asar');
+      if (asarModule && typeof asarModule.createPackage === 'function') {
+        useProgrammaticAPI = true;
+        console.log('Using @electron/asar programmatic API');
+        asarModule.createPackage(tempAppDir, asarPath);
+        console.log('✓ Created app.asar using programmatic API');
       }
+    } catch (apiError) {
+      console.log('Programmatic API not available, trying binary...');
+      // Fall through to binary approach
     }
     
-    const asarCommand = asarBinary 
-      ? `"${asarBinary}" pack "${tempAppDir}" "${asarPath}"`
-      : `npx --yes @electron/asar pack "${tempAppDir}" "${asarPath}"`;
-    
-    console.log('Running:', asarCommand);
-    console.log('Temp dir:', tempAppDir);
-    console.log('Output path:', asarPath);
-    
-    // Capture both stdout and stderr for better error reporting
-    let output = '';
-    let errorOutput = '';
-    try {
-      output = execSync(asarCommand, { 
-        cwd: projectDir, 
-        shell: true,
-        encoding: 'utf8',
-        stdio: ['ignore', 'pipe', 'pipe']
-      });
-      if (output) console.log('asar output:', output);
-    } catch (execError) {
-      errorOutput = execError.stderr ? execError.stderr.toString() : execError.message;
-      if (execError.stdout) {
-        output = execError.stdout.toString();
-        console.log('asar stdout:', output);
+    if (!useProgrammaticAPI) {
+      // Try to find asar binary - prefer local node_modules, then system paths, then npx
+      let asarBinary = null;
+      const localAsar = path.join(projectDir, 'node_modules', '.bin', 'asar');
+      const localElectronAsar = path.join(projectDir, 'node_modules', '.bin', 'electron-asar');
+      if (fs.existsSync(localAsar)) {
+        asarBinary = localAsar;
+        console.log('Using local asar from node_modules');
+      } else if (fs.existsSync(localElectronAsar)) {
+        asarBinary = localElectronAsar;
+        console.log('Using local @electron/asar from node_modules');
+      } else {
+        // Try system paths
+        const systemPaths = ['/opt/homebrew/bin/asar', '/usr/local/bin/asar'];
+        for (const sysPath of systemPaths) {
+          if (fs.existsSync(sysPath)) {
+            asarBinary = sysPath;
+            console.log('Using system asar:', sysPath);
+            break;
+          }
+        }
       }
-      console.error('asar stderr:', errorOutput);
-      throw execError;
+      
+      const asarCommand = asarBinary 
+        ? `"${asarBinary}" pack "${tempAppDir}" "${asarPath}"`
+        : `npx --yes @electron/asar pack "${tempAppDir}" "${asarPath}"`;
+      
+      console.log('Running:', asarCommand);
+      console.log('Temp dir:', tempAppDir);
+      console.log('Output path:', asarPath);
+      
+      // Capture both stdout and stderr for better error reporting
+      let output = '';
+      let errorOutput = '';
+      try {
+        output = execSync(asarCommand, { 
+          cwd: projectDir, 
+          shell: true,
+          encoding: 'utf8',
+          stdio: ['ignore', 'pipe', 'pipe']
+        });
+        if (output) console.log('asar output:', output);
+      } catch (execError) {
+        errorOutput = execError.stderr ? execError.stderr.toString() : execError.message;
+        if (execError.stdout) {
+          output = execError.stdout.toString();
+          console.log('asar stdout:', output);
+        }
+        console.error('asar stderr:', errorOutput);
+        throw execError;
+      }
     }
     
     // Verify it was created
