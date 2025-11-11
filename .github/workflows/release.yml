@@ -327,7 +327,8 @@ jobs:
             fi
             
             echo "Running electron-builder for Linux..."
-            if npx electron-builder --linux --x64 --publish never 2>&1 | tee build.log; then
+            # Explicitly request AppImage format
+            if npx electron-builder --linux AppImage --x64 --publish never 2>&1 | tee build.log; then
               echo "✓ electron-builder completed successfully"
             else
               BUILD_EXIT_CODE=$?
