@@ -326,9 +326,22 @@ jobs:
               exit 1
             fi
             
+            # Install AppImageTool if not available (required for AppImage creation)
+            if ! command -v appimagetool &> /dev/null; then
+              echo "Installing AppImageTool..."
+              wget -q https://github.com/AppImage/AppImageKit/releases/download/continuous/appimagetool-x86_64.AppImage -O /tmp/appimagetool
+              chmod +x /tmp/appimagetool
+              export PATH="/tmp:$PATH"
+              # Create symlink for electron-builder to find it
+              mkdir -p /tmp/bin
+              ln -sf /tmp/appimagetool /tmp/bin/appimagetool || true
+              export PATH="/tmp/bin:$PATH"
+            fi
+            
             echo "Running electron-builder for Linux..."
-            # Explicitly request AppImage format
-            if npx electron-builder --linux AppImage --x64 --publish never 2>&1 | tee build.log; then
+            # Use --linux flag without AppImage suffix (electron-builder will use config)
+            # Remove --dir flag to ensure AppImage is created
+            if npx electron-builder --linux --x64 --publish never 2>&1 | tee build.log; then
               echo "✓ electron-builder completed successfully"
             else
               BUILD_EXIT_CODE=$?
