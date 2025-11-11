@@ -327,23 +327,42 @@ jobs:
             fi
             
             # Install AppImageTool if not available (required for AppImage creation)
-            # electron-builder will download it automatically, but we can pre-install it
+            # Extract the AppImage to avoid FUSE requirement
             if ! command -v appimagetool &> /dev/null; then
               echo "Installing AppImageTool..."
-              wget -q https://github.com/AppImage/AppImageKit/releases/download/continuous/appimagetool-x86_64.AppImage -O /tmp/appimagetool
-              chmod +x /tmp/appimagetool
-              # Create a wrapper script that electron-builder can find
-              mkdir -p ~/.local/bin
-              echo '#!/bin/bash' > ~/.local/bin/appimagetool
-              echo '/tmp/appimagetool "$@"' >> ~/.local/bin/appimagetool
-              chmod +x ~/.local/bin/appimagetool
-              export PATH="$HOME/.local/bin:$PATH"
+              wget -q https://github.com/AppImage/AppImageKit/releases/download/continuous/appimagetool-x86_64.AppImage -O /tmp/appimagetool.AppImage
+              chmod +x /tmp/appimagetool.AppImage
+              
+              # Extract AppImage to avoid FUSE requirement
+              echo "Extracting AppImageTool..."
+              /tmp/appimagetool.AppImage --appimage-extract > /dev/null 2>&1 || {
+                # Alternative: try to extract manually
+                cd /tmp
+                ./appimagetool.AppImage --appimage-extract-and-run --help > /dev/null 2>&1 || true
+              }
+              
+              # Find the extracted binary
+              if [ -f "/tmp/squashfs-root/AppRun" ]; then
+                # Use the extracted AppRun as appimagetool
+                mkdir -p ~/.local/bin
+                ln -sf /tmp/squashfs-root/AppRun ~/.local/bin/appimagetool
+                export PATH="$HOME/.local/bin:$PATH"
+                echo "✓ AppImageTool extracted and installed"
+              else
+                # Fallback: try to use electron-builder's own AppImageTool
+                echo "⚠ Could not extract AppImageTool, electron-builder will download its own"
+              fi
             fi
             
             # Verify appimagetool is accessible
             echo "Verifying appimagetool installation..."
-            which appimagetool || echo "⚠ appimagetool not in PATH"
-            appimagetool --version || echo "⚠ appimagetool version check failed"
+            if command -v appimagetool &> /dev/null; then
+              echo "✓ appimagetool found at: $(which appimagetool)"
+              # Try to get version (may fail if FUSE is needed, but that's OK for building)
+              appimagetool --version 2>&1 || echo "⚠ Version check failed (may need FUSE to run, but OK for building)"
+            else
+              echo "⚠ appimagetool not in PATH - electron-builder will download its own"
+            fi
             
             echo "Running electron-builder for Linux..."
             # Explicitly specify AppImage target and ensure we're not using --dir
@@ -403,23 +422,51 @@ jobs:
                 echo "  Attempting to manually create AppImage from unpacked directory..."
                 UNPACKED_DIR=$(find release -type d -name "*unpacked" 2>/dev/null | head -1)
                 MANUAL_APPIMAGE_CREATED=false
-                if [ -n "$UNPACKED_DIR" ] && command -v appimagetool &> /dev/null; then
+                if [ -n "$UNPACKED_DIR" ]; then
                   echo "  Found unpacked directory: $UNPACKED_DIR"
-                  echo "  Creating AppImage manually..."
-                  # Try to get version from package.json or use tag
-                  VERSION=$(node -p "require('./package.json').version" 2>/dev/null || echo "${GITHUB_REF#refs/tags/}")
-                  APPIMAGE_NAME="ACCELARA-${VERSION}-x86_64.AppImage"
-                  if appimagetool "$UNPACKED_DIR" "release/$APPIMAGE_NAME" 2>&1; then
-                    if [ -f "release/$APPIMAGE_NAME" ]; then
-                      echo "  ✓ Successfully created AppImage manually: release/$APPIMAGE_NAME"
-                      ls -lh "release/$APPIMAGE_NAME"
-                      MANUAL_APPIMAGE_CREATED=true
+                  
+                  # Try to use extracted appimagetool
+                  APPIMAGETOOL_CMD=""
+                  if [ -f "/tmp/squashfs-root/AppRun" ]; then
+                    APPIMAGETOOL_CMD="/tmp/squashfs-root/AppRun"
+                  elif command -v appimagetool &> /dev/null; then
+                    APPIMAGETOOL_CMD="appimagetool"
+                  fi
+                  
+                  if [ -n "$APPIMAGETOOL_CMD" ]; then
+                    echo "  Creating AppImage manually using: $APPIMAGETOOL_CMD"
+                    # Try to get version from package.json or use tag
+                    VERSION=$(node -p "require('./package.json').version" 2>/dev/null || echo "${GITHUB_REF#refs/tags/}")
+                    APPIMAGE_NAME="ACCELARA-${VERSION}-x86_64.AppImage"
+                    
+                    # Create AppDir structure if needed
+                    if [ ! -f "$UNPACKED_DIR/AppRun" ]; then
+                      echo "  Creating AppDir structure..."
+                      # AppImage needs AppRun, .desktop file, and icon
+                      # electron-builder should have created these, but let's check
+                      if [ -f "$UNPACKED_DIR/ACCELARA" ]; then
+                        # Create AppRun script
+                        echo '#!/bin/bash' > "$UNPACKED_DIR/AppRun"
+                        echo 'HERE="$(dirname "$(readlink -f "${0}")")"' >> "$UNPACKED_DIR/AppRun"
+                        echo 'exec "${HERE}/ACCELARA" "$@"' >> "$UNPACKED_DIR/AppRun"
+                        chmod +x "$UNPACKED_DIR/AppRun"
+                      fi
+                    fi
+                    
+                    if $APPIMAGETOOL_CMD "$UNPACKED_DIR" "release/$APPIMAGE_NAME" 2>&1; then
+                      if [ -f "release/$APPIMAGE_NAME" ]; then
+                        echo "  ✓ Successfully created AppImage manually: release/$APPIMAGE_NAME"
+                        ls -lh "release/$APPIMAGE_NAME"
+                        MANUAL_APPIMAGE_CREATED=true
+                      fi
+                    else
+                      echo "  Manual AppImage creation failed (may need FUSE or different approach)"
                     fi
                   else
-                    echo "  Manual AppImage creation failed"
+                    echo "  Cannot create AppImage manually (appimagetool not available)"
                   fi
                 else
-                  echo "  Cannot create AppImage manually (missing unpacked dir or appimagetool)"
+                  echo "  Cannot create AppImage manually (missing unpacked directory)"
                 fi
                 # Exit with error only if we couldn't create AppImage manually either
                 if [ "$MANUAL_APPIMAGE_CREATED" != "true" ] && [ "$APPIMAGE_COUNT" -eq 0 ]; then
