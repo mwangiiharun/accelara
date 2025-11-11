@@ -324,8 +324,12 @@ jobs:
           if [ -d "release" ]; then
             find release -name "*.exe" -type f 2>/dev/null || echo "No .exe files found"
           fi
-          else
-            echo "=== Building Linux AppImage ==="
+
+      - name: Build Electron App (Linux)
+        if: matrix.platform == 'linux'
+        shell: bash
+        run: |
+          echo "=== Building Linux AppImage ==="
             # Check if icon exists, if not, electron-builder will use default
             if [ ! -f "build/icon.png" ]; then
               echo "⚠ Warning: build/icon.png not found, electron-builder will use default icon"
