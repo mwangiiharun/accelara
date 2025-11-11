@@ -13,7 +13,9 @@ build-cli:
 build-api:
 	@echo "Building API wrapper..."
 	@mkdir -p bin
-	@go build -o bin/api-wrapper ./cmd/api-wrapper
+	@go build -ldflags="-s -w" -trimpath -o bin/api-wrapper ./cmd/api-wrapper
+	@echo "Stripping binary..."
+	@strip bin/api-wrapper 2>/dev/null || echo "strip not available, skipping"
 
 # Build for all platforms
 build-all:

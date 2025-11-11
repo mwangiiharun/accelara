@@ -191,6 +191,41 @@ if (!fs.existsSync(sqlJsUnpackedPath) && fs.existsSync(sqlJsSourcePath)) {
   console.warn('⚠ sql.js source not found at:', sqlJsSourcePath);
   console.warn('   The app may fail to start if sql.js is not included in the build');
 }
+
+// Clean up unnecessary sql.js files to reduce package size
+if (fs.existsSync(sqlJsUnpackedPath)) {
+  const distPath = path.join(sqlJsUnpackedPath, 'dist');
+  if (fs.existsSync(distPath)) {
+    console.log('Cleaning up unnecessary sql.js files...');
+    const filesToRemove = [
+      'sql-asm-debug.js',
+      'sql-asm.js',
+      'sql-asm-memory-growth.js',
+      'sql-wasm-debug.js',
+      'sql-wasm-debug.wasm',
+      'worker.sql-asm-debug.js',
+      'worker.sql-asm.js',
+      'worker.sql-wasm-debug.js',
+      'sqljs-all.zip',
+      'sqljs-wasm.zip',
+      'sqljs-worker-wasm.zip',
+    ];
+    
+    let totalSaved = 0;
+    for (const file of filesToRemove) {
+      const filePath = path.join(distPath, file);
+      if (fs.existsSync(filePath)) {
+        const stats = fs.statSync(filePath);
+        totalSaved += stats.size;
+        fs.unlinkSync(filePath);
+        console.log(`  ✓ Removed ${file} (${(stats.size / 1024 / 1024).toFixed(2)} MB)`);
+      }
+    }
+    if (totalSaved > 0) {
+      console.log(`✓ Cleaned up ${(totalSaved / 1024 / 1024).toFixed(2)} MB of unnecessary sql.js files`);
+    }
+  }
+}
 if (!fs.existsSync(asarPath)) {
   console.log('⚠ app.asar missing - creating it manually...');
   const { execSync } = require('child_process');
