@@ -83,8 +83,19 @@ jobs:
       - name: Build Frontend
         run: npm run build:react
       
+      - name: Install Linux build dependencies
+        if: matrix.platform == 'linux'
+        shell: bash
+        run: |
+          # Install unsquashfs for AppImage extraction (if not available)
+          if ! command -v unsquashfs &> /dev/null; then
+            echo "Installing squashfs-tools for AppImage extraction..."
+            sudo apt-get update -qq && sudo apt-get install -y squashfs-tools 2>/dev/null || echo "⚠ Could not install squashfs-tools"
+          fi
+      
       - name: Verify build prerequisites
         if: matrix.platform == 'linux'
+        shell: bash
         run: |
           echo "=== Verifying Linux build prerequisites ==="
           echo "Checking for icon file:"
