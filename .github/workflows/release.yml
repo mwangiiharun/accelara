@@ -330,10 +330,10 @@ jobs:
         shell: bash
         run: |
           echo "=== Building Linux AppImage ==="
-            # Check if icon exists, if not, electron-builder will use default
-            if [ ! -f "build/icon.png" ]; then
-              echo "⚠ Warning: build/icon.png not found, electron-builder will use default icon"
-            fi
+          # Check if icon exists, if not, electron-builder will use default
+          if [ ! -f "build/icon.png" ]; then
+            echo "⚠ Warning: build/icon.png not found, electron-builder will use default icon"
+          fi
             
             # Verify prerequisites before building
             if [ ! -f "bin/api-wrapper" ]; then
