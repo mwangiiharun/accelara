@@ -83,6 +83,8 @@ export interface ElectronAPI {
   onSpeedTestComplete: (callback: (data: { testId: string; code: number }) => void) => void;
   onSpeedTestError: (callback: (data: { testId: string; error: string }) => void) => void;
   removeSpeedTestListeners: () => void;
+  
+  focusWindow: () => Promise<{ success: boolean }>;
 }
 
 declare global {

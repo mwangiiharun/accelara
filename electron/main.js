@@ -8,6 +8,9 @@ const { getDatabase } = require('./database');
 // Minimal startup logging
 console.log('Electron starting...');
 
+// Set app name explicitly
+app.setName('ACCELARA');
+
 let mainWindow;
 let downloadProcesses = new Map();
 let speedTestProcesses = new Map();
@@ -170,11 +173,22 @@ function setupWindowLoadHandlers(mainWindow, isDev) {
       mainWindow.show();
     });
   } else {
-    const filePath = path.join(__dirname, '../dist/index.html');
+    // In production, use app.getAppPath() which returns the ASAR path
+    // dist/index.html is at app.asar/dist/index.html
+    const appPath = app.getAppPath();
+    const filePath = path.join(appPath, 'dist', 'index.html');
     console.log('Loading file:', filePath);
+    console.log('App path:', appPath);
+    
     mainWindow.loadFile(filePath).catch(err => {
       try {
         console.error('Error loading file:', err);
+        // Fallback: try relative path from __dirname
+        const fallbackPath = path.join(__dirname, '../dist/index.html');
+        console.log('Trying fallback path:', fallbackPath);
+        mainWindow.loadFile(fallbackPath).catch(fallbackErr => {
+          console.error('Failed to load fallback path:', fallbackErr);
+        });
       } catch (logError) {
         if (logError.code !== 'EPIPE') {
           // Only log if it's not an EPIPE error
@@ -191,7 +205,8 @@ function setupWindowLoadHandlers(mainWindow, isDev) {
 }
 
 function createWindow() {
-  const isDev = !process.env.NODE_ENV || process.env.NODE_ENV === 'development';
+  // Use app.isPackaged for reliable production detection
+  const isDev = !app.isPackaged && (process.env.NODE_ENV === 'development' || !process.env.NODE_ENV);
   
   const windowOptions = {
     width: 1400,
@@ -638,7 +653,7 @@ function setDockIcon(isDev) {
 
   // eslint-disable-next-line unicorn/prefer-top-level-await
   app.whenReady().then(() => {
-    const isDev = !process.env.NODE_ENV || process.env.NODE_ENV === 'development';
+    const isDev = !app.isPackaged && (process.env.NODE_ENV === 'development' || !process.env.NODE_ENV);
     setDockIcon(isDev);
     
     createWindow();
@@ -701,11 +716,20 @@ function handleArgs(args) {
 }
 
 function handleMagnetLink(magnetLink) {
-  if (mainWindow && mainWindow.webContents) {
-    mainWindow.webContents.send('external-download', {
-      type: 'magnet',
-      source: magnetLink,
-    });
+  // Ensure window is visible and focused
+  if (mainWindow) {
+    if (mainWindow.isMinimized()) {
+      mainWindow.restore();
+    }
+    mainWindow.show();
+    mainWindow.focus();
+    
+    if (mainWindow.webContents) {
+      mainWindow.webContents.send('external-download', {
+        type: 'magnet',
+        source: magnetLink,
+      });
+    }
   }
 }
 
@@ -714,11 +738,20 @@ function handleTorrentFile(filePath) {
     ? filePath 
     : path.resolve(process.cwd(), filePath);
   
-  if (mainWindow && mainWindow.webContents) {
-    mainWindow.webContents.send('external-download', {
-      type: 'torrent',
-      source: absolutePath,
-    });
+  // Ensure window is visible and focused
+  if (mainWindow) {
+    if (mainWindow.isMinimized()) {
+      mainWindow.restore();
+    }
+    mainWindow.show();
+    mainWindow.focus();
+    
+    if (mainWindow.webContents) {
+      mainWindow.webContents.send('external-download', {
+        type: 'torrent',
+        source: absolutePath,
+      });
+    }
   }
 }
 
@@ -878,35 +911,63 @@ function buildCommandArgs(source, outputPath, downloadId, options) {
 
 // Helper function to find Go binary
 function findGoBinary() {
-  const devBinary = path.resolve(__dirname, '../bin/api-wrapper' + (process.platform === 'win32' ? '.exe' : ''));
-  let prodBinary = devBinary;
-  if (process.resourcesPath) {
-    const exeExtension = process.platform === 'win32' ? '.exe' : '';
-    prodBinary = path.join(process.resourcesPath, 'bin', `api-wrapper${exeExtension}`);
-  }
+  const exeExtension = process.platform === 'win32' ? '.exe' : '';
+  const binaryName = `api-wrapper${exeExtension}`;
   
-  // Check if dev binary exists, otherwise use prod
-  let goBinary = devBinary;
-  if (!fs.existsSync(devBinary) && fs.existsSync(prodBinary)) {
-    goBinary = prodBinary;
-  }
+  // Try multiple possible locations
+  const possiblePaths = [
+    // 1. Development path (relative to __dirname)
+    path.resolve(__dirname, '../bin', binaryName),
+    // 2. Production path (in Resources/bin) - primary production path
+    process.resourcesPath ? path.join(process.resourcesPath, 'bin', binaryName) : null,
+    // 3. Alternative production path (if resourcesPath points elsewhere)
+    process.resourcesPath ? path.join(process.resourcesPath, '..', 'Resources', 'bin', binaryName) : null,
+    // 4. Using app.getPath('exe') to find app bundle location (macOS)
+    process.platform === 'darwin' && app && typeof app.getPath === 'function' 
+      ? path.join(path.dirname(app.getPath('exe')), '..', 'Resources', 'bin', binaryName) 
+      : null,
+    // 5. Current working directory
+    path.join(process.cwd(), 'bin', binaryName),
+  ].filter(Boolean);
   
-  // Verify binary exists
-  if (!fs.existsSync(goBinary)) {
+  // Log paths being checked (only in production for debugging)
+  if (app.isPackaged) {
     try {
-      console.error('Go binary not found at:', goBinary);
-      console.error('   Dev path:', devBinary);
-      console.error('   Prod path:', prodBinary);
-    } catch (logError) {
-      // Ignore EPIPE errors from console - this is intentional
-      if (logError.code !== 'EPIPE') {
-        // Only log if it's not an EPIPE error
-      }
+      console.log('Looking for Go binary. Resources path:', process.resourcesPath);
+      console.log('Checking paths:', possiblePaths.slice(0, 3).join(', '));
+    } catch {
+      // Ignore logging errors
     }
-    throw new Error(`Go binary not found. Please run 'make build-api' to build it.`);
   }
   
-  return goBinary;
+  // Check each path in order
+  for (const possiblePath of possiblePaths) {
+    if (fs.existsSync(possiblePath)) {
+      // Verify it's executable (on Unix-like systems)
+      if (process.platform !== 'win32') {
+        try {
+          fs.accessSync(possiblePath, fs.constants.X_OK);
+        } catch {
+          // Not executable, try next path
+          continue;
+        }
+      }
+      console.log('Found Go binary at:', possiblePath);
+      return possiblePath;
+    }
+  }
+  
+  // None found - throw error with all attempted paths
+  const errorMsg = `Go binary not found. Tried paths:\n${possiblePaths.map(p => `  - ${p}`).join('\n')}\n\nResources path: ${process.resourcesPath}\nPlease ensure the binary is built and included in the app bundle.`;
+  try {
+    console.error(errorMsg);
+  } catch (logError) {
+    // Ignore EPIPE errors from console
+    if (logError.code !== 'EPIPE') {
+      // Only log if it's not an EPIPE error
+    }
+  }
+  throw new Error(`Go binary not found. Please run 'make build-api' to build it.`);
 }
 
 // Helper function to determine download type
@@ -1367,6 +1428,18 @@ ipcMain.handle('clear-speed-test-results', async () => {
   const db = await getDatabase();
   db.prepare('DELETE FROM speed_test_results').run();
   return { success: true };
+});
+
+ipcMain.handle('focus-window', () => {
+  if (mainWindow) {
+    if (mainWindow.isMinimized()) {
+      mainWindow.restore();
+    }
+    mainWindow.show();
+    mainWindow.focus();
+    return { success: true };
+  }
+  return { success: false };
 });
 
 ipcMain.handle('start-speed-test', async (event, { testType = 'full' }) => {

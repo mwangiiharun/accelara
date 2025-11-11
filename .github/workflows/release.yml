@@ -187,21 +187,26 @@ jobs:
                 echo "DMG was created successfully, which is the main distribution method"
               fi
               
-              # Create DMG file (primary distribution format)
-              DMG_PATH="release/ACCELARA-mac-${{ matrix.goarch }}.dmg"
+              # Create DMG file using our custom script (primary distribution format)
+              # This script handles: app renaming, Info.plist updates, icon copying, 
+              # sql.js unpacking, app.asar creation, and DMG creation
               echo ""
-              echo "=== Creating DMG (primary) ==="
-              echo "DMG path: $DMG_PATH"
-              set +e  # Don't fail on DMG errors
-              hdiutil create -volname "ACCELARA" -srcfolder "$APP_BUNDLE" -ov -format UDZO "$DMG_PATH" 2>&1
-              DMG_EXIT=$?
-              set -e  # Re-enable error handling
-              if [ $DMG_EXIT -eq 0 ] && [ -f "$DMG_PATH" ]; then
+              echo "=== Creating DMG using createDMG.js script (primary) ==="
+              node scripts/createDMG.js
+              
+              # Verify DMG was created
+              DMG_PATH="release/ACCELARA.dmg"
+              if [ -f "$DMG_PATH" ]; then
                 echo "✓ DMG created successfully: $DMG_PATH"
                 ls -lh "$DMG_PATH"
+                # Rename to include architecture for artifact naming
+                ARCH_DMG="release/ACCELARA-mac-${{ matrix.goarch }}.dmg"
+                mv "$DMG_PATH" "$ARCH_DMG" || cp "$DMG_PATH" "$ARCH_DMG"
+                echo "✓ Renamed to: $ARCH_DMG"
+                ls -lh "$ARCH_DMG"
                 echo "✓ Build completed successfully"
               else
-                echo "✗ DMG creation failed (exit code: $DMG_EXIT)"
+                echo "✗ DMG creation failed - DMG not found at: $DMG_PATH"
                 echo "This is critical - DMG is the primary distribution format"
                 exit 1
               fi

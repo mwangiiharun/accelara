@@ -1,4 +1,3 @@
-const initSqlJs = require('sql.js');
 const path = require('path');
 const fs = require('fs');
 const os = require('os');
@@ -17,7 +16,87 @@ let SQL = null;
 async function getDatabase() {
   if (!db) {
     if (!SQL) {
-      SQL = await initSqlJs();
+      // Dynamically require sql.js to handle ASAR unpacking
+      let initSqlJs;
+      
+      // Check if we're in production (packaged app)
+      // In ASAR, __dirname will be something like /path/to/app.asar/electron
+      const isProduction = __dirname.includes('.asar') || (process.resourcesPath && !__dirname.includes('node_modules'));
+      
+      if (isProduction) {
+        // Try multiple paths in order of preference
+        const possiblePaths = [
+          // 1. Unpacked location (preferred)
+          path.join(process.resourcesPath, 'app.asar.unpacked', 'node_modules', 'sql.js'),
+          // 2. Resources path with node_modules
+          path.join(process.resourcesPath, 'node_modules', 'sql.js'),
+          // 3. App path (if app.getAppPath is available)
+          process.defaultApp ? null : path.join(process.resourcesPath, 'app.asar', 'node_modules', 'sql.js'),
+        ].filter(Boolean);
+        
+        let loaded = false;
+        for (const sqlJsPath of possiblePaths) {
+          // sql.js main entry point is dist/sql-wasm.js (not index.js)
+          const sqlJsMain = path.join(sqlJsPath, 'dist', 'sql-wasm.js');
+          if (fs.existsSync(sqlJsMain)) {
+            try {
+              // Clear cache if this path was previously loaded
+              if (require.cache[sqlJsMain]) {
+                delete require.cache[sqlJsMain];
+              }
+              
+              // Directly require the main file using absolute path
+              // This bypasses Node's module resolution which doesn't work well with unpacked ASAR
+              const sqlJsModule = require(sqlJsMain);
+              // sql.js exports initSqlJs as the default export or as the module itself
+              initSqlJs = sqlJsModule.default || sqlJsModule;
+              
+              if (typeof initSqlJs !== 'function') {
+                throw new Error('sql.js initSqlJs is not a function');
+              }
+              
+              // Initialize with WASM file location
+              const wasmPath = path.join(sqlJsPath, 'dist');
+              SQL = await initSqlJs({ 
+                locateFile: (file) => {
+                  const wasmFile = path.join(wasmPath, file);
+                  if (fs.existsSync(wasmFile)) {
+                    return wasmFile;
+                  }
+                  // Fallback to relative path
+                  return path.join(sqlJsPath, 'dist', file);
+                }
+              });
+              loaded = true;
+              console.log('Loaded sql.js from:', sqlJsPath);
+              break;
+            } catch (err) {
+              console.warn('Failed to load sql.js from', sqlJsPath, ':', err.message);
+              console.warn('Error stack:', err.stack);
+              // Continue to next path
+            }
+          } else {
+            console.warn('sql.js main file not found at:', sqlJsMain);
+          }
+        }
+        
+        if (!loaded) {
+          // Final fallback: try normal require (might work if sql.js is in ASAR)
+          try {
+            initSqlJs = require('sql.js');
+            SQL = await initSqlJs();
+            console.log('Loaded sql.js via normal require');
+          } catch (err) {
+            console.error('Failed to load sql.js:', err.message);
+            console.error('Tried paths:', possiblePaths);
+            throw new Error(`Cannot find module 'sql.js'. Please ensure it is included in the build.`);
+          }
+        }
+      } else {
+        // Development mode - normal require
+        initSqlJs = require('sql.js');
+        SQL = await initSqlJs();
+      }
     }
     
     // Load existing database or create new one
