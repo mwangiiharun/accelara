@@ -139,10 +139,10 @@ jobs:
             exit 1
           fi
 
-      - name: Build Electron App
+      - name: Build Electron App (macOS)
+        if: matrix.platform == 'mac'
         shell: bash
         run: |
-          if [ "${{ matrix.platform }}" == "mac" ]; then
             echo "=== Starting electron-builder (packaging only) ==="
             if [ "${{ matrix.goarch }}" == "amd64" ]; then
               npx electron-builder --mac --dir --x64 --publish never 2>&1 | tee build.log || true
@@ -312,7 +312,11 @@ jobs:
               find release -name "*.app" -type d 2>/dev/null || echo "No app bundles found"
               exit 1
             fi
-          elif [ "${{ matrix.platform }}" == "win" ]; then
+
+      - name: Build Electron App (Windows)
+        if: matrix.platform == 'win'
+        shell: bash
+        run: |
             echo "=== Building Windows installer ==="
             npx electron-builder --win --x64 --publish never 2>&1 | tee build.log || true
             echo ""
