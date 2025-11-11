@@ -317,13 +317,13 @@ jobs:
         if: matrix.platform == 'win'
         shell: bash
         run: |
-            echo "=== Building Windows installer ==="
-            npx electron-builder --win --x64 --publish never 2>&1 | tee build.log || true
-            echo ""
-            echo "=== Windows build output ==="
-            if [ -d "release" ]; then
-              find release -name "*.exe" -type f 2>/dev/null || echo "No .exe files found"
-            fi
+          echo "=== Building Windows installer ==="
+          npx electron-builder --win --x64 --publish never 2>&1 | tee build.log || true
+          echo ""
+          echo "=== Windows build output ==="
+          if [ -d "release" ]; then
+            find release -name "*.exe" -type f 2>/dev/null || echo "No .exe files found"
+          fi
           else
             echo "=== Building Linux AppImage ==="
             # Check if icon exists, if not, electron-builder will use default
