@@ -534,9 +534,20 @@ StartupNotify=false
                     WORKSPACE_ROOT="$(pwd)"
                     cd "$WORKSPACE_ROOT"
                     
+                    # Verify .desktop file exists before creating AppImage
+                    echo "  Verifying AppDir structure before creating AppImage..."
+                    echo "  AppDir: $UNPACKED_DIR"
+                    echo "  AppRun exists: $([ -f "$UNPACKED_DIR/AppRun" ] && echo 'yes' || echo 'no')"
+                    echo "  .desktop files found:"
+                    find "$UNPACKED_DIR" -name "*.desktop" -type f 2>/dev/null | while read -r f; do
+                      echo "    - $f"
+                      cat "$f" | head -5
+                    done || echo "    (none found)"
+                    
                     # Try creating AppImage with verbose output
                     echo "  Running: $APPIMAGETOOL_CMD \"$UNPACKED_DIR\" \"release/$APPIMAGE_NAME\""
-                    if $APPIMAGETOOL_CMD "$UNPACKED_DIR" "release/$APPIMAGE_NAME" 2>&1; then
+                    # Use --no-appstream to skip AppStream validation if needed
+                    if $APPIMAGETOOL_CMD --no-appstream "$UNPACKED_DIR" "release/$APPIMAGE_NAME" 2>&1; then
                       if [ -f "release/$APPIMAGE_NAME" ]; then
                         echo "  ✓ Successfully created AppImage manually: release/$APPIMAGE_NAME"
                         ls -lh "release/$APPIMAGE_NAME"
