@@ -364,10 +364,24 @@ jobs:
               exit $BUILD_EXIT_CODE
             fi
             echo ""
+            echo "=== Checking build.log for AppImage creation ==="
+            if [ -f "build.log" ]; then
+              echo "Searching for AppImage-related messages:"
+              grep -i "appimage\|packaging\|building" build.log | tail -20 || echo "No AppImage messages found"
+              echo ""
+              echo "Checking for warnings or errors:"
+              grep -i "warn\|error\|fail" build.log | tail -30 || echo "No warnings/errors found"
+            fi
+            
+            echo ""
             echo "=== Linux build output ==="
             if [ -d "release" ]; then
               echo "All files in release:"
-              find release -type f 2>/dev/null | head -20 || echo "No files found"
+              find release -type f -name "*.AppImage" 2>/dev/null || echo "No AppImage files found"
+              find release -type d -name "*unpacked*" 2>/dev/null || echo "No unpacked directories found"
+              echo ""
+              echo "Full release directory structure:"
+              ls -la release/ 2>/dev/null || echo "Cannot list release directory"
               echo ""
               echo "AppImage files:"
               APPIMAGE_COUNT=$(find release -name "*.AppImage" -type f 2>/dev/null | wc -l)
@@ -378,18 +392,32 @@ jobs:
                 done
               else
                 echo "✗ ERROR: No AppImage files found!"
-                echo "  Searching in release directory:"
-                find release -type f 2>/dev/null | head -20
+                echo "  Release directory contents:"
+                find release -type f 2>/dev/null | head -30
                 echo ""
-                echo "  Checking build.log for errors:"
+                echo "  Full build.log (last 100 lines):"
                 if [ -f "build.log" ]; then
-                  echo "  === Last 50 lines of build.log ==="
-                  tail -50 build.log
-                  echo ""
-                  echo "  === Errors in build.log ==="
-                  grep -i "error\|fail" build.log | tail -20 || echo "  No obvious errors found"
+                  tail -100 build.log
                 fi
-                exit 1
+                echo ""
+                echo "  Attempting to manually create AppImage from unpacked directory..."
+                UNPACKED_DIR=$(find release -type d -name "*unpacked" 2>/dev/null | head -1)
+                if [ -n "$UNPACKED_DIR" ] && command -v appimagetool &> /dev/null; then
+                  echo "  Found unpacked directory: $UNPACKED_DIR"
+                  echo "  Creating AppImage manually..."
+                  APPIMAGE_NAME="ACCELARA-${GITHUB_REF#refs/tags/}-x86_64.AppImage"
+                  appimagetool "$UNPACKED_DIR" "release/$APPIMAGE_NAME" 2>&1 || echo "  Manual AppImage creation failed"
+                  if [ -f "release/$APPIMAGE_NAME" ]; then
+                    echo "  ✓ Successfully created AppImage manually: release/$APPIMAGE_NAME"
+                    ls -lh "release/$APPIMAGE_NAME"
+                  fi
+                else
+                  echo "  Cannot create AppImage manually (missing unpacked dir or appimagetool)"
+                fi
+                # Don't exit with error if we manually created it
+                if [ ! -f "release/$APPIMAGE_NAME" ] && [ "$APPIMAGE_COUNT" -eq 0 ]; then
+                  exit 1
+                fi
               fi
               echo ""
               echo "ACCELARA files:"
