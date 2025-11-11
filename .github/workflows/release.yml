@@ -499,16 +499,17 @@ jobs:
                         EXEC_NAME="accelara"
                       fi
                       
-                      DESKTOP_CONTENT="[Desktop Entry]
+                      cat > "$DESKTOP_FILE" << 'DESKTOP_EOF'
+[Desktop Entry]
 Name=ACCELARA
 Comment=Unified HTTP + BitTorrent Download Manager
-Exec=$EXEC_NAME
+Exec=ACCELARA
 Icon=accelara
 Type=Application
 Categories=Utility;Network;
-StartupNotify=false"
-                      echo "$DESKTOP_CONTENT" > "$DESKTOP_FILE"
-                      echo "$DESKTOP_CONTENT" > "$DESKTOP_FILE_ALT"
+StartupNotify=false
+DESKTOP_EOF
+                      cp "$DESKTOP_FILE" "$DESKTOP_FILE_ALT"
                       echo "  Created .desktop files at: $DESKTOP_FILE and $DESKTOP_FILE_ALT"
                       NEEDS_STRUCTURE=true
                     else
