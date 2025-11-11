@@ -914,51 +914,143 @@ function findGoBinary() {
   const exeExtension = process.platform === 'win32' ? '.exe' : '';
   const binaryName = `api-wrapper${exeExtension}`;
   
-  // Try multiple possible locations
-  const possiblePaths = [
-    // 1. Development path (relative to __dirname)
-    path.resolve(__dirname, '../bin', binaryName),
-    // 2. Production path (in Resources/bin) - primary production path
-    process.resourcesPath ? path.join(process.resourcesPath, 'bin', binaryName) : null,
-    // 3. Alternative production path (if resourcesPath points elsewhere)
-    process.resourcesPath ? path.join(process.resourcesPath, '..', 'Resources', 'bin', binaryName) : null,
-    // 4. Using app.getPath('exe') to find app bundle location (macOS)
-    process.platform === 'darwin' && app && typeof app.getPath === 'function' 
-      ? path.join(path.dirname(app.getPath('exe')), '..', 'Resources', 'bin', binaryName) 
-      : null,
-    // 5. Current working directory
-    path.join(process.cwd(), 'bin', binaryName),
-  ].filter(Boolean);
+  // Build comprehensive list of possible paths
+  const possiblePaths = [];
+  
+  // Development paths
+  possiblePaths.push(path.resolve(__dirname, '../bin', binaryName));
+  
+  // Production paths - try multiple variations
+  if (process.resourcesPath) {
+    // Standard production path
+    possiblePaths.push(path.join(process.resourcesPath, 'bin', binaryName));
+    
+    // Alternative: if resourcesPath is app.asar, go up to Resources
+    if (process.resourcesPath.includes('app.asar')) {
+      const resourcesDir = path.dirname(process.resourcesPath);
+      possiblePaths.push(path.join(resourcesDir, 'bin', binaryName));
+    }
+  }
+  
+  // macOS-specific: use app.getPath('exe') to find app bundle
+  if (process.platform === 'darwin' && app && typeof app.getPath === 'function') {
+    try {
+      const exePath = app.getPath('exe');
+      const resourcesDir = path.join(path.dirname(exePath), '..', 'Resources');
+      possiblePaths.push(path.join(resourcesDir, 'bin', binaryName));
+    } catch {
+      // Ignore errors
+    }
+  }
+  
+  // Also try app.getAppPath() for ASAR location
+  if (app && typeof app.getAppPath === 'function') {
+    try {
+      const appPath = app.getAppPath();
+      if (appPath.includes('.asar')) {
+        const resourcesDir = path.dirname(appPath).replace('app.asar', '');
+        possiblePaths.push(path.join(resourcesDir, 'bin', binaryName));
+      }
+    } catch {
+      // Ignore errors
+    }
+  }
+  
+  // Current working directory (fallback)
+  possiblePaths.push(path.join(process.cwd(), 'bin', binaryName));
+  
+  // Remove duplicates and nulls
+  const uniquePaths = [...new Set(possiblePaths.filter(Boolean))];
   
   // Log paths being checked (only in production for debugging)
   if (app.isPackaged) {
     try {
-      console.log('Looking for Go binary. Resources path:', process.resourcesPath);
-      console.log('Checking paths:', possiblePaths.slice(0, 3).join(', '));
+      console.log('=== Searching for Go binary ===');
+      console.log('Binary name:', binaryName);
+      console.log('Resources path:', process.resourcesPath);
+      console.log('__dirname:', __dirname);
+      if (app && typeof app.getPath === 'function') {
+        try {
+          console.log('App exe path:', app.getPath('exe'));
+          console.log('App path:', app.getAppPath());
+        } catch {}
+      }
+      console.log('Checking', uniquePaths.length, 'possible paths...');
     } catch {
       // Ignore logging errors
     }
   }
   
   // Check each path in order
-  for (const possiblePath of possiblePaths) {
-    if (fs.existsSync(possiblePath)) {
-      // Verify it's executable (on Unix-like systems)
-      if (process.platform !== 'win32') {
-        try {
-          fs.accessSync(possiblePath, fs.constants.X_OK);
-        } catch {
-          // Not executable, try next path
+  for (const possiblePath of uniquePaths) {
+    try {
+      if (fs.existsSync(possiblePath)) {
+        // Verify it's executable (on Unix-like systems)
+        if (process.platform !== 'win32') {
+          try {
+            fs.accessSync(possiblePath, fs.constants.X_OK);
+          } catch {
+            console.warn('Binary found but not executable:', possiblePath);
+            // Not executable, try next path
+            continue;
+          }
+        }
+        
+        // Verify it's actually a file (not a directory)
+        const stats = fs.statSync(possiblePath);
+        if (!stats.isFile()) {
+          console.warn('Path exists but is not a file:', possiblePath);
           continue;
         }
+        
+        console.log('✓ Found Go binary at:', possiblePath);
+        if (app.isPackaged) {
+          console.log('  File size:', (stats.size / 1024 / 1024).toFixed(2), 'MB');
+        }
+        return possiblePath;
       }
-      console.log('Found Go binary at:', possiblePath);
-      return possiblePath;
+    } catch (err) {
+      // Continue to next path if this one fails
+      if (app.isPackaged) {
+        console.warn('Error checking path:', possiblePath, err.message);
+      }
     }
   }
   
-  // None found - throw error with all attempted paths
-  const errorMsg = `Go binary not found. Tried paths:\n${possiblePaths.map(p => `  - ${p}`).join('\n')}\n\nResources path: ${process.resourcesPath}\nPlease ensure the binary is built and included in the app bundle.`;
+  // None found - provide detailed error information
+  const errorDetails = [];
+  errorDetails.push('Go binary not found!');
+  errorDetails.push(`Binary name: ${binaryName}`);
+  errorDetails.push(`Platform: ${process.platform}`);
+  errorDetails.push(`Resources path: ${process.resourcesPath || 'undefined'}`);
+  errorDetails.push(`__dirname: ${__dirname}`);
+  if (app && typeof app.getPath === 'function') {
+    try {
+      errorDetails.push(`App exe: ${app.getPath('exe')}`);
+      errorDetails.push(`App path: ${app.getAppPath()}`);
+    } catch {}
+  }
+  errorDetails.push('\nTried paths:');
+  uniquePaths.forEach((p, i) => {
+    const exists = fs.existsSync(p);
+    errorDetails.push(`  ${i + 1}. ${p} ${exists ? '(exists)' : '(not found)'}`);
+    if (exists) {
+      try {
+        const stats = fs.statSync(p);
+        errorDetails.push(`     Type: ${stats.isFile() ? 'file' : stats.isDirectory() ? 'directory' : 'other'}`);
+        if (process.platform !== 'win32') {
+          try {
+            fs.accessSync(p, fs.constants.X_OK);
+            errorDetails.push(`     Executable: yes`);
+          } catch {
+            errorDetails.push(`     Executable: no`);
+          }
+        }
+      } catch {}
+    }
+  });
+  
+  const errorMsg = errorDetails.join('\n');
   try {
     console.error(errorMsg);
   } catch (logError) {
@@ -967,7 +1059,7 @@ function findGoBinary() {
       // Only log if it's not an EPIPE error
     }
   }
-  throw new Error(`Go binary not found. Please run 'make build-api' to build it.`);
+  throw new Error(`Go binary not found. Please ensure the binary is built and included in the app bundle.`);
 }
 
 // Helper function to determine download type

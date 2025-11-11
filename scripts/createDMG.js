@@ -61,11 +61,55 @@ if (fs.existsSync(binSource)) {
           fs.chmodSync(destFile, 0o755);
         }
         console.log(`✓ Copied binary: ${file} -> ${path.basename(destFile)}`);
+        
+        // Verify the copy was successful
+        if (!fs.existsSync(destFile)) {
+          console.error(`✗ ERROR: Binary copy failed - ${destFile} does not exist!`);
+          process.exit(1);
+        }
+        
+        // Verify it's executable (on Unix-like systems)
+        if (process.platform !== 'win32') {
+          try {
+            fs.accessSync(destFile, fs.constants.X_OK);
+            console.log(`  ✓ Verified executable permissions`);
+          } catch {
+            console.error(`✗ ERROR: Binary is not executable: ${destFile}`);
+            process.exit(1);
+          }
+        }
+        
+        // Verify file size matches
+        const sourceStats = fs.statSync(sourceFile);
+        const destStats = fs.statSync(destFile);
+        if (sourceStats.size !== destStats.size) {
+          console.error(`✗ ERROR: Binary size mismatch! Source: ${sourceStats.size}, Dest: ${destStats.size}`);
+          process.exit(1);
+        }
+        console.log(`  ✓ Verified file size: ${(destStats.size / 1024 / 1024).toFixed(2)} MB`);
       }
     }
   }
+  
+  // Final verification: ensure api-wrapper exists
+  const apiWrapperPath = path.join(binDest, 'api-wrapper');
+  if (!fs.existsSync(apiWrapperPath)) {
+    console.error('✗ CRITICAL ERROR: api-wrapper binary not found after copy!');
+    console.error('  Expected location:', apiWrapperPath);
+    console.error('  Bin directory contents:');
+    if (fs.existsSync(binDest)) {
+      try {
+        const files = fs.readdirSync(binDest);
+        files.forEach(f => console.error(`    - ${f}`));
+      } catch {}
+    }
+    process.exit(1);
+  }
+  console.log('✓ Final verification: api-wrapper binary confirmed at', apiWrapperPath);
 } else {
-  console.warn('Warning: bin directory not found at', binSource);
+  console.error('✗ CRITICAL ERROR: bin directory not found at', binSource);
+  console.error('  Cannot proceed without Go binaries!');
+  process.exit(1);
 }
 
 // Rename app bundle if it's still named Electron.app

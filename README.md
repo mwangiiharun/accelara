@@ -146,8 +146,15 @@ Now you can run it like a real program:
    ```bash
    make build-api      # Build Go backend
    npm run build:react # Build React app
-   npm run build       # Build Electron app (with electron-builder)
+   npm run build       # Build Electron app with verification (creates DMG with binary verification)
    ```
+
+   The build process includes:
+   - Go binary compilation
+   - React frontend build
+   - Electron app packaging
+   - Binary verification (ensures api-wrapper is copied and executable)
+   - DMG creation with post-verification
 
 ---
 
@@ -164,9 +171,23 @@ npm run build
 ```
 
 This will:
-- Build the Go backend 
-- Build the React frontend 
-- Package everything into a beautiful Electron app
+- Build the Go backend (`make build-api`)
+- Build the React frontend (`vite build`)
+- Package everything with electron-builder (`electron-builder --mac --dir`)
+- Run `scripts/createDMG.js` which:
+  - Copies Go binaries to app bundle with verification (size, permissions, existence)
+  - Renames Electron.app to ACCELARA.app
+  - Updates Info.plist with correct app name and icon
+  - Unpacks sql.js for database functionality
+  - Creates app.asar if missing
+  - Creates DMG with post-verification (mounts DMG and verifies binary is accessible)
+
+**Verification Steps:**
+- ✅ Binary copy verification (size, permissions, existence)
+- ✅ Pre-DMG binary check
+- ✅ Post-DMG binary verification (mounts DMG and checks binary is accessible)
+
+**Output:** `release/ACCELARA.dmg` - A verified DMG file ready for distribution.
 
 **But wait!** This only builds for your current platform. Want to build for all platforms? Read on, you ambitious soul.
 
@@ -179,16 +200,29 @@ You're on macOS? Lucky you. This is the easiest one:
 ```bash
 # Build for your current architecture (Intel or Apple Silicon)
 npm run build
-
-# Or be fancy and build for both architectures
-npm run build -- --mac --x64 --arm64
 ```
 
-**Output:** A beautiful `.dmg` file in `release/mac/` that you can double-click to install. It's like magic, but with more disk space.
+This runs the full build process with verification:
+1. Builds Go binaries (`bin/api-wrapper`)
+2. Builds React frontend
+3. Packages Electron app
+4. Runs `scripts/createDMG.js` which:
+   - Verifies binaries are copied correctly (size, permissions, existence)
+   - Creates properly named ACCELARA.app
+   - Updates Info.plist with correct app name and icon
+   - Unpacks sql.js for database functionality
+   - Creates app.asar if missing
+   - Verifies binary exists and is executable before DMG creation
+   - Creates DMG
+   - Mounts DMG and verifies binary is accessible (post-verification)
+
+**Output:** `release/ACCELARA.dmg` - A verified DMG file ready for distribution.
 
 **What you get:**
-- `ACCELARA.dmg` - The installer that makes macOS users feel fancy
+- `ACCELARA.dmg` - The installer that makes macOS users feel fancy (with verified binary)
 - `ACCELARA.app` - The actual app (because `.app` bundles are macOS's way of saying "I'm organized")
+
+**Note:** The build process includes multiple verification steps to ensure the Go binary (`api-wrapper`) is correctly included and accessible. If verification fails, the build will exit with an error.
 
 **Pro tip:** If you want to code-sign it (so macOS doesn't throw scary warnings), you'll need an Apple Developer account. But honestly, who has $99/year for that? Just tell users to right-click and "Open Anyway" like the rest of us rebels.
 

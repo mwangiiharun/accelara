@@ -187,6 +187,29 @@ jobs:
                 echo "DMG was created successfully, which is the main distribution method"
               fi
               
+              # Verify binary exists before creating DMG
+              echo ""
+              echo "=== Pre-DMG Binary Verification ==="
+              BIN_PATH="$APP_BUNDLE/Contents/Resources/bin/api-wrapper"
+              if [ -f "$BIN_PATH" ]; then
+                echo "✓ api-wrapper binary verified at: $BIN_PATH"
+                ls -lh "$BIN_PATH"
+                # Verify it's executable
+                if [ -x "$BIN_PATH" ]; then
+                  echo "✓ Binary is executable"
+                else
+                  echo "✗ ERROR: Binary is not executable!"
+                  chmod +x "$BIN_PATH" || exit 1
+                  echo "✓ Fixed permissions"
+                fi
+              else
+                echo "✗ CRITICAL: api-wrapper binary not found before DMG creation!"
+                echo "  Expected: $BIN_PATH"
+                echo "  Bin directory contents:"
+                ls -la "$APP_BUNDLE/Contents/Resources/bin/" || echo "  Bin directory does not exist!"
+                exit 1
+              fi
+              
               # Create DMG file using our custom script (primary distribution format)
               # This script handles: app renaming, Info.plist updates, icon copying, 
               # sql.js unpacking, app.asar creation, and DMG creation
@@ -199,6 +222,38 @@ jobs:
               if [ -f "$DMG_PATH" ]; then
                 echo "✓ DMG created successfully: $DMG_PATH"
                 ls -lh "$DMG_PATH"
+                
+                # Post-DMG verification: Mount DMG and verify binary is accessible
+                echo ""
+                echo "=== Post-DMG Binary Verification ==="
+                MOUNT_POINT="/tmp/accelara_dmg_verify"
+                mkdir -p "$MOUNT_POINT"
+                hdiutil attach "$DMG_PATH" -mountpoint "$MOUNT_POINT" -quiet -nobrowse 2>&1 || {
+                  echo "⚠ Could not mount DMG for verification (non-critical)"
+                }
+                
+                if [ -d "$MOUNT_POINT/ACCELARA.app" ]; then
+                  DMG_BIN_PATH="$MOUNT_POINT/ACCELARA.app/Contents/Resources/bin/api-wrapper"
+                  if [ -f "$DMG_BIN_PATH" ]; then
+                    echo "✓ Binary verified in DMG at: $DMG_BIN_PATH"
+                    ls -lh "$DMG_BIN_PATH"
+                    if [ -x "$DMG_BIN_PATH" ]; then
+                      echo "✓ Binary is executable in DMG"
+                    else
+                      echo "⚠ Warning: Binary not executable in DMG (should not happen)"
+                    fi
+                  else
+                    echo "✗ ERROR: Binary not found in DMG!"
+                    echo "  Expected: $DMG_BIN_PATH"
+                    hdiutil detach "$MOUNT_POINT" -quiet 2>&1 || true
+                    exit 1
+                  fi
+                  hdiutil detach "$MOUNT_POINT" -quiet 2>&1 || true
+                else
+                  echo "⚠ Could not find ACCELARA.app in DMG for verification"
+                  hdiutil detach "$MOUNT_POINT" -quiet 2>&1 || true
+                fi
+                
                 # Rename to include architecture for artifact naming
                 ARCH_DMG="release/ACCELARA-mac-${{ matrix.goarch }}.dmg"
                 mv "$DMG_PATH" "$ARCH_DMG" || cp "$DMG_PATH" "$ARCH_DMG"
