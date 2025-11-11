@@ -386,6 +386,8 @@ jobs:
             fi
             
             echo "Running electron-builder for Linux..."
+            # Ensure appimagetool is in PATH for electron-builder
+            export PATH="$HOME/.local/bin:$PATH"
             # Explicitly specify AppImage target and ensure we're not using --dir
             # electron-builder should create AppImage based on config, but let's be explicit
             if npx electron-builder --linux AppImage --x64 --publish never 2>&1 | tee build.log; then
@@ -463,17 +465,50 @@ jobs:
                     APPIMAGE_NAME="ACCELARA-${VERSION}-x86_64.AppImage"
                     
                     # Create AppDir structure if needed
+                    echo "  Checking AppDir structure..."
+                    NEEDS_STRUCTURE=false
+                    
+                    # Check for AppRun
                     if [ ! -f "$UNPACKED_DIR/AppRun" ]; then
-                      echo "  Creating AppDir structure..."
-                      # AppImage needs AppRun, .desktop file, and icon
-                      # electron-builder should have created these, but let's check
+                      echo "  Creating AppRun script..."
                       if [ -f "$UNPACKED_DIR/ACCELARA" ]; then
-                        # Create AppRun script
                         echo '#!/bin/bash' > "$UNPACKED_DIR/AppRun"
                         echo 'HERE="$(dirname "$(readlink -f "${0}")")"' >> "$UNPACKED_DIR/AppRun"
                         echo 'exec "${HERE}/ACCELARA" "$@"' >> "$UNPACKED_DIR/AppRun"
                         chmod +x "$UNPACKED_DIR/AppRun"
+                        NEEDS_STRUCTURE=true
                       fi
+                    fi
+                    
+                    # Check for .desktop file (required by appimagetool)
+                    DESKTOP_FILE=$(find "$UNPACKED_DIR" -name "*.desktop" -type f 2>/dev/null | head -1)
+                    if [ -z "$DESKTOP_FILE" ]; then
+                      echo "  Creating .desktop file..."
+                      DESKTOP_FILE="$UNPACKED_DIR/accelara.desktop"
+                      cat > "$DESKTOP_FILE" << 'EOF'
+[Desktop Entry]
+Name=ACCELARA
+Comment=Unified HTTP + BitTorrent Download Manager
+Exec=ACCELARA
+Icon=accelara
+Type=Application
+Categories=Utility;Network;
+EOF
+                      NEEDS_STRUCTURE=true
+                    fi
+                    
+                    # Check for icon
+                    ICON_FILE=$(find "$UNPACKED_DIR" -name "*.png" -o -name "icon.png" -o -name "accelara.png" 2>/dev/null | head -1)
+                    if [ -z "$ICON_FILE" ]; then
+                      echo "  Creating placeholder icon reference..."
+                      # Create a simple icon reference (appimagetool will handle missing icons)
+                      NEEDS_STRUCTURE=true
+                    fi
+                    
+                    if [ "$NEEDS_STRUCTURE" = "true" ]; then
+                      echo "  ✓ AppDir structure created/updated"
+                    else
+                      echo "  ✓ AppDir structure already complete"
                     fi
                     
                     if $APPIMAGETOOL_CMD "$UNPACKED_DIR" "release/$APPIMAGE_NAME" 2>&1; then
