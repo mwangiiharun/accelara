@@ -499,6 +499,7 @@ jobs:
                         EXEC_NAME="accelara"
                       fi
                       
+                      # Create .desktop file using heredoc (YAML-safe)
                       cat > "$DESKTOP_FILE" << 'DESKTOP_EOF'
 [Desktop Entry]
 Name=ACCELARA
@@ -509,6 +510,8 @@ Type=Application
 Categories=Utility;Network;
 StartupNotify=false
 DESKTOP_EOF
+                      # Update Exec line with actual executable name
+                      sed -i "s|Exec=ACCELARA|Exec=$EXEC_NAME|g" "$DESKTOP_FILE"
                       cp "$DESKTOP_FILE" "$DESKTOP_FILE_ALT"
                       echo "  Created .desktop files at: $DESKTOP_FILE and $DESKTOP_FILE_ALT"
                       NEEDS_STRUCTURE=true
