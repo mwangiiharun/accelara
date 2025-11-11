@@ -794,7 +794,7 @@ jobs:
       - name: Determine version
         id: version
         run: |
-            VERSION="${GITHUB_REF#refs/tags/}"
+          VERSION="${GITHUB_REF#refs/tags/}"
           echo "version=$VERSION" >> $GITHUB_OUTPUT
           echo "Version: $VERSION"
 
