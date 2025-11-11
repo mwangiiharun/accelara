@@ -402,20 +402,27 @@ jobs:
                 echo ""
                 echo "  Attempting to manually create AppImage from unpacked directory..."
                 UNPACKED_DIR=$(find release -type d -name "*unpacked" 2>/dev/null | head -1)
+                MANUAL_APPIMAGE_CREATED=false
                 if [ -n "$UNPACKED_DIR" ] && command -v appimagetool &> /dev/null; then
                   echo "  Found unpacked directory: $UNPACKED_DIR"
                   echo "  Creating AppImage manually..."
-                  APPIMAGE_NAME="ACCELARA-${GITHUB_REF#refs/tags/}-x86_64.AppImage"
-                  appimagetool "$UNPACKED_DIR" "release/$APPIMAGE_NAME" 2>&1 || echo "  Manual AppImage creation failed"
-                  if [ -f "release/$APPIMAGE_NAME" ]; then
-                    echo "  ✓ Successfully created AppImage manually: release/$APPIMAGE_NAME"
-                    ls -lh "release/$APPIMAGE_NAME"
+                  # Try to get version from package.json or use tag
+                  VERSION=$(node -p "require('./package.json').version" 2>/dev/null || echo "${GITHUB_REF#refs/tags/}")
+                  APPIMAGE_NAME="ACCELARA-${VERSION}-x86_64.AppImage"
+                  if appimagetool "$UNPACKED_DIR" "release/$APPIMAGE_NAME" 2>&1; then
+                    if [ -f "release/$APPIMAGE_NAME" ]; then
+                      echo "  ✓ Successfully created AppImage manually: release/$APPIMAGE_NAME"
+                      ls -lh "release/$APPIMAGE_NAME"
+                      MANUAL_APPIMAGE_CREATED=true
+                    fi
+                  else
+                    echo "  Manual AppImage creation failed"
                   fi
                 else
                   echo "  Cannot create AppImage manually (missing unpacked dir or appimagetool)"
                 fi
-                # Don't exit with error if we manually created it
-                if [ ! -f "release/$APPIMAGE_NAME" ] && [ "$APPIMAGE_COUNT" -eq 0 ]; then
+                # Exit with error only if we couldn't create AppImage manually either
+                if [ "$MANUAL_APPIMAGE_CREATED" != "true" ] && [ "$APPIMAGE_COUNT" -eq 0 ]; then
                   exit 1
                 fi
               fi
