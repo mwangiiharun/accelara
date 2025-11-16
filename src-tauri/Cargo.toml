@@ -1,6 +1,6 @@
 [package]
 name = "accelara"
-version = "3.0.0"
+version = "3.0.1"
 description = "ACCELARA - Unified HTTP + BitTorrent CLI Download Manager"
 authors = ["Mwangii Kinuthia"]
 license = "MIT"
@@ -28,7 +28,8 @@ tauri-plugin-os = { version = "2", features = [] }
 tauri-plugin-process = { version = "2", features = [] }
 rusqlite = { version = "0.31", features = ["bundled"] }
 tokio = { version = "1", features = ["full"] }
-reqwest = { version = "0.12", features = ["json"] }
+reqwest = { version = "0.12", features = ["json", "stream"] }
+futures-util = "0.3"
 dirs = "5.0"
 which = "6.0"
 lazy_static = "1.4"

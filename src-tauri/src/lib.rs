@@ -8,6 +8,8 @@ mod utils;
 mod theme;
 mod browser_server;
 mod logger;
+mod updater;
+mod update_manager;
 
 use tauri::Manager;
 
@@ -49,6 +51,8 @@ pub fn run() {
             commands::get_log_path,
             commands::get_recent_logs,
             commands::open_debug_log_window,
+            commands::check_for_updates,
+            commands::download_update,
         ])
         .setup(|app| {
             // Initialize logger
@@ -125,6 +129,9 @@ pub fn run() {
                 tokio::time::sleep(tokio::time::Duration::from_millis(1000)).await;
                 commands::auto_resume_downloads(app_handle).await;
             });
+            
+            // Set up automatic update checking
+            update_manager::setup_update_checking(app.handle().clone());
             
             Ok(())
         })

@@ -64,11 +64,41 @@ export default function DownloadItem({ download }) {
           {getIcon()}
           <div className="flex-1 min-w-0">
             <p className="theme-text-primary font-medium truncate">
-              {(download.type === 'torrent' || download.type === 'magnet') && download.torrent_name
-                ? download.torrent_name
-                : download.source}
+              {(() => {
+                // For torrents/magnets, show torrent name
+                if ((download.type === 'torrent' || download.type === 'magnet') && download.torrent_name) {
+                  return download.torrent_name;
+                }
+                // For HTTP downloads, show filename if available
+                if (download.type === 'http' && download.fileName) {
+                  return download.fileName;
+                }
+                // Fallback to source URL (truncated)
+                if (download.source && download.source.length > 50) {
+                  return download.source.substring(0, 50) + '...';
+                }
+                return download.source;
+              })()}
             </p>
-            <p className="text-sm theme-text-tertiary truncate">{download.output}</p>
+            <p className="text-sm theme-text-tertiary truncate">
+              {(() => {
+                // Show metadata info if available
+                if (download.httpInfo) {
+                  const parts = [];
+                  if (download.httpInfo.contentType) {
+                    parts.push(download.httpInfo.contentType);
+                  }
+                  if (download.httpInfo.totalSize) {
+                    parts.push(formatBytes(download.httpInfo.totalSize));
+                  }
+                  if (parts.length > 0) {
+                    return parts.join(' • ');
+                  }
+                }
+                // Fallback to output path
+                return download.output;
+              })()}
+            </p>
           </div>
         </div>
         <div className="flex items-center gap-2">
@@ -93,9 +123,13 @@ export default function DownloadItem({ download }) {
               <Pause className="w-4 h-4 theme-text-secondary" />
             </button>
           )}
-          {download.status === 'paused' && (
+          {(download.status === 'paused' || download.status === 'initializing') && (
             <button
-              onClick={(e) => { e.stopPropagation(); resumeDownload(download.id); }}
+              onClick={(e) => { 
+                e.stopPropagation(); 
+                console.log('[DownloadItem] Resuming download:', download.id, 'from status:', download.status);
+                resumeDownload(download.id); 
+              }}
               className="p-1 hover:theme-bg-hover rounded transition-colors"
               title="Resume download"
             >

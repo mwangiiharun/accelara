@@ -80,10 +80,12 @@ export function DownloadProvider({ children }) {
           if (existing) {
             // If download is paused, don't allow status updates to change it to downloading
             // Exception: if auto_paused flag is set, we still want to respect manual resume
+            // Also allow status updates if the download is in "initializing" state (user clicked resume)
             const isAutoPaused = existing.auto_paused === true;
-            if (existing.status === 'paused' && data.status && data.status !== 'paused' && !isAutoPaused) {
+            const isInitializing = existing.status === 'initializing';
+            if (existing.status === 'paused' && data.status && data.status !== 'paused' && !isAutoPaused && !isInitializing) {
               // Ignore status updates that would change paused to another status
-              // (unless it was auto-paused, in which case user can manually resume)
+              // (unless it was auto-paused or initializing, in which case user can manually resume)
               return prev;
             }
             
@@ -216,6 +218,9 @@ export function DownloadProvider({ children }) {
               verified: data.verified,
               // Store torrent name if available
               torrent_name: data.torrent_name || existing.torrent_name,
+              // Store HTTP info and fileName if available
+              fileName: data.fileName || (data.httpInfo?.fileName) || existing.fileName,
+              httpInfo: data.httpInfo || existing.httpInfo,
               // Store file progress for torrents
               file_progress: data.file_progress || existing.file_progress || [],
               // Store error and info messages (cleared if download is progressing)
@@ -286,6 +291,8 @@ export function DownloadProvider({ children }) {
                 seedsHistory: data.seedsHistory || [],
                 peers: data.peers || 0,
                 seeds: data.seeds || 0,
+                fileName: data.fileName || (data.httpInfo?.fileName) || null,
+                httpInfo: data.httpInfo || null,
                 ...data,
               };
               // Check if it's already in the list (by ID) to prevent duplicates
@@ -405,6 +412,10 @@ export function DownloadProvider({ children }) {
         );
       }
       
+      // Extract HTTP info from options if available
+      const httpInfo = options?.httpInfo;
+      const fileName = httpInfo?.fileName || (output ? output.split('/').pop() : null);
+      
       // Add new download only if it doesn't exist
       const newDownload = {
         id: result.downloadId,
@@ -418,6 +429,8 @@ export function DownloadProvider({ children }) {
         speedHistory: [],
         peers: 0,
         seeds: 0,
+        fileName: fileName,
+        httpInfo: httpInfo,
         ...options,
       };
       return [...prev, newDownload];
@@ -442,8 +455,15 @@ export function DownloadProvider({ children }) {
 
   const resumeDownload = useCallback(async (downloadId) => {
     if (window.electronAPI) {
-      await window.electronAPI.resumeDownload(downloadId);
-      setDownloads((prev) => prev.map((d) => d.id === downloadId ? { ...d, status: 'downloading' } : d));
+      console.log('[DownloadContext] Resuming download:', downloadId);
+      try {
+        await window.electronAPI.resumeDownload(downloadId);
+        setDownloads((prev) => prev.map((d) => d.id === downloadId ? { ...d, status: 'downloading' } : d));
+      } catch (error) {
+        console.error('[DownloadContext] Failed to resume download:', downloadId, error);
+        // Update status to error on failure
+        setDownloads((prev) => prev.map((d) => d.id === downloadId ? { ...d, status: 'error', error: error.message || String(error) } : d));
+      }
     }
   }, []);
 

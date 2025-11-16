@@ -279,13 +279,12 @@ pub async fn monitor_download_process_with_streams(
                 [&download_id],
                 |row| Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?)),
             ) {
-                // Only check for HTTP downloads - torrents don't use .part files
+                use crate::utils;
+                let expanded_output = utils::expand_path(&output);
+                let output_path = std::path::Path::new(&expanded_output);
+                
                 if download_type == "http" || download_type == "https" {
-                    use crate::utils;
-                    let expanded_output = utils::expand_path(&output);
-                    let output_path = std::path::Path::new(&expanded_output);
-                    
-                    // Check if final file exists
+                    // HTTP downloads: Check if final file exists (not a .part file)
                     let final_file_exists = output_path.exists() && output_path.is_file();
                     
                     // Check if there are still .part files (chunks not merged)
@@ -334,6 +333,76 @@ pub async fn monitor_download_process_with_streams(
                         return;
                     } else if !final_file_exists {
                         eprintln!("[monitor] Warning: Download completed but final file doesn't exist: {}", expanded_output);
+                        eprintln!("[monitor] Attempting to find file in parent directory...");
+                        // Try to find the file in the parent directory
+                        if let Some(parent) = output_path.parent() {
+                            if let Ok(entries) = std::fs::read_dir(parent) {
+                                for entry in entries.flatten() {
+                                    let path = entry.path();
+                                    if path.is_file() {
+                                        if let Some(name) = path.file_name() {
+                                            if name == output_path.file_name().unwrap_or_default() {
+                                                eprintln!("[monitor] Found file at: {}", path.display());
+                                                // Update output path in database
+                                                if let Ok(conn) = database::get_connection() {
+                                                    let _ = conn.execute(
+                                                        "UPDATE downloads SET output = ? WHERE id = ?",
+                                                        rusqlite::params![path.to_string_lossy().to_string(), download_id],
+                                                    );
+                                                }
+                                                break;
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    } else {
+                        eprintln!("[monitor] ✓ HTTP download completed successfully: {}", expanded_output);
+                    }
+                } else if download_type == "torrent" || download_type == "magnet" {
+                    // Torrent downloads: Check if files exist in the output directory
+                    // Torrents write directly to final locations (no .part files)
+                    if output_path.exists() {
+                        if output_path.is_dir() {
+                            // Multi-file torrent - check if directory has files
+                            let mut has_files = false;
+                            if let Ok(entries) = std::fs::read_dir(output_path) {
+                                for entry in entries.flatten() {
+                                    let path = entry.path();
+                                    if path.is_file() || path.is_dir() {
+                                        has_files = true;
+                                        break;
+                                    }
+                                }
+                            }
+                            if has_files {
+                                eprintln!("[monitor] ✓ Torrent download completed successfully in: {}", expanded_output);
+                            } else {
+                                eprintln!("[monitor] Warning: Torrent directory exists but is empty: {}", expanded_output);
+                            }
+                        } else {
+                            // Single-file torrent
+                            if output_path.is_file() {
+                                eprintln!("[monitor] ✓ Torrent download completed successfully: {}", expanded_output);
+                            } else {
+                                eprintln!("[monitor] Warning: Torrent file path exists but is not a file: {}", expanded_output);
+                            }
+                        }
+                    } else {
+                        eprintln!("[monitor] Warning: Torrent output path doesn't exist: {}", expanded_output);
+                        // For torrents, the actual files might be in a subdirectory
+                        // The Go code creates a folder with the torrent name inside the output directory
+                        if let Some(parent) = output_path.parent() {
+                            if let Ok(entries) = std::fs::read_dir(parent) {
+                                for entry in entries.flatten() {
+                                    let path = entry.path();
+                                    if path.is_dir() {
+                                        eprintln!("[monitor] Found potential torrent directory: {}", path.display());
+                                    }
+                                }
+                            }
+                        }
                     }
                 }
             }
@@ -399,23 +468,14 @@ pub async fn monitor_download_process_with_streams(
             rusqlite::params![final_status, download_id],
         );
         
-        // For completed downloads that are not seeding torrents, remove from downloads table
-        // (seeding torrents should stay in downloads table)
+        // For completed downloads, update status but keep in downloads table for history
+        // The history table is separate and tracks completed downloads
+        // We keep completed downloads in the downloads table with "completed" status
+        // so they can be shown in the UI until explicitly removed
         if success {
-            if let Ok(download_type) = conn.query_row::<String, _, _>(
-                "SELECT type FROM downloads WHERE id = ?1",
-                [&download_id],
-                |row| row.get(0),
-            ) {
-                // Only remove HTTP downloads from active downloads
-                // Torrents that are seeding should stay
-                if download_type == "http" || download_type == "https" {
-                    let _ = conn.execute(
-                        "DELETE FROM downloads WHERE id = ?1",
-                        [&download_id],
-                    );
-                }
-            }
+            // Status is already updated to "completed" above
+            // History entry is already created above
+            // No need to delete from downloads table - keep it for UI display
         }
     }
     

@@ -15,6 +15,8 @@ export function SettingsProvider({ children }) {
     readTimeout: 60,
     retries: 5,
     torrentPort: 42069,
+    autoCheckForUpdates: true,
+    updateCheckInterval: 24, // hours
   });
   const [systemTheme, setSystemTheme] = useState('dark');
 

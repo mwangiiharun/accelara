@@ -36,10 +36,10 @@ function AppContent({ startDownload }) {
 
   useEffect(() => {
     // Listen for external downloads (magnet links, torrent files)
-    // Open the download modal with the source pre-filled instead of starting directly
+    // Open the download modal with the source pre-filled and auto-start
     if (window.electronAPI) {
       const handleExternalDownload = async (data) => {
-        // Set the initial source and open the modal
+        // Set the initial source and open the modal with auto-start enabled
         setModalInitialSource(data.source);
         setShowAddModal(true);
         // Ensure window is visible and focused
@@ -71,6 +71,7 @@ function AppContent({ startDownload }) {
             setModalInitialSource(''); // Clear initial source when closing
           }} 
           initialSource={modalInitialSource}
+          autoStart={!!modalInitialSource} // Auto-start if source came from extension
         />
       )}
     </>

@@ -4,8 +4,8 @@ import { useSettings } from '../context/SettingsContext';
 import { X, File, Folder, Loader2, AlertCircle } from 'lucide-react';
 import { formatBytes } from '../utils/format';
 
-export default function AddDownloadModal({ onClose, initialSource = '' }) {
-  const { startDownload } = useDownloads();
+export default function AddDownloadModal({ onClose, initialSource = '', autoStart = false }) {
+  const { startDownload, resumeDownload } = useDownloads();
   const { settings } = useSettings();
   const [source, setSource] = useState(initialSource);
   const [output, setOutput] = useState('');
@@ -14,6 +14,7 @@ export default function AddDownloadModal({ onClose, initialSource = '' }) {
   const [torrentInfo, setTorrentInfo] = useState(null);
   const [httpInfo, setHttpInfo] = useState(null);
   const [inspectError, setInspectError] = useState(null);
+  const [downloadId, setDownloadId] = useState(null);
 
   // Update source when initialSource changes (e.g., from external click)
   useEffect(() => {
@@ -106,6 +107,91 @@ export default function AddDownloadModal({ onClose, initialSource = '' }) {
     return () => clearTimeout(timeoutId);
   }, [source, settings.defaultDownloadPath]);
 
+  // Auto-start download if:
+  // 1. autoStart is true (from extension), OR
+  // 2. source is a valid HTTP/HTTPS URL (pasted link)
+  useEffect(() => {
+    const isHttpUrl = source && (source.startsWith('http://') || source.startsWith('https://'));
+    const shouldAutoStart = autoStart || isHttpUrl;
+    
+    if (shouldAutoStart && source && output && !loading && !inspecting && !downloadId) {
+      // Wait a bit for HTTP info to be fetched
+      if (isHttpUrl) {
+        if (httpInfo || inspectError) {
+          // HTTP info is ready (or failed), start the download
+          console.log('[AddDownloadModal] Auto-starting HTTP download:', source);
+          handleSubmit(null);
+        }
+      } else {
+        // For torrents, wait for inspection or start anyway after a delay
+        if (torrentInfo || inspectError) {
+          console.log('[AddDownloadModal] Auto-starting torrent download:', source);
+          handleSubmit(null);
+        }
+      }
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [autoStart, source, output, httpInfo, torrentInfo, inspectError, inspecting, loading, downloadId]);
+
+  const handleSubmit = async (e) => {
+    if (e) {
+      e.preventDefault();
+    }
+    setLoading(true);
+    
+    try {
+      // Include HTTP info metadata if available
+      const downloadOptions = {
+        concurrency: settings.concurrency,
+        chunk_size: settings.chunkSize,
+        limit: settings.rateLimit,
+        bt_upload_limit: settings.uploadLimit,
+        bt_sequential: settings.sequentialMode,
+        bt_keep_seeding: settings.keepSeeding || false,
+        bt_port: settings.torrentPort || 42069,
+        connect_timeout: settings.connectTimeout,
+        read_timeout: settings.readTimeout,
+        retries: settings.retries,
+      };
+      
+      // Add HTTP metadata if available
+      if (httpInfo) {
+        downloadOptions.httpInfo = httpInfo;
+      }
+      
+      const id = await startDownload(source, output || undefined, downloadOptions);
+      
+      setDownloadId(id);
+      
+      // Auto-resume if autoStart is true
+      if (autoStart && id) {
+        console.log('[AddDownloadModal] Auto-starting download:', id);
+        // Small delay to ensure download is created
+        setTimeout(async () => {
+          try {
+            await resumeDownload(id);
+            console.log('[AddDownloadModal] Download auto-resumed:', id);
+          } catch (error) {
+            console.error('[AddDownloadModal] Failed to auto-resume:', error);
+          }
+        }, 300);
+      }
+      
+      if (!autoStart) {
+        onClose();
+      } else {
+        // For auto-start, close after a short delay to show it started
+        setTimeout(() => {
+          onClose();
+        }, 1000);
+      }
+    } catch (error) {
+      console.error('Failed to start download:', error);
+    } finally {
+      setLoading(false);
+    }
+  };
+
   const handleSelectTorrent = async () => {
     if (globalThis.electronAPI) {
       try {
@@ -132,31 +218,6 @@ export default function AddDownloadModal({ onClose, initialSource = '' }) {
       } catch (error) {
         console.error('Failed to select download folder:', error);
       }
-    }
-  };
-
-  const handleSubmit = async (e) => {
-    e.preventDefault();
-    setLoading(true);
-    
-    try {
-      await startDownload(source, output || undefined, {
-        concurrency: settings.concurrency,
-        chunk_size: settings.chunkSize,
-        limit: settings.rateLimit,
-        bt_upload_limit: settings.uploadLimit,
-        bt_sequential: settings.sequentialMode,
-        bt_keep_seeding: settings.keepSeeding || false,
-        bt_port: settings.torrentPort || 42069,
-        connect_timeout: settings.connectTimeout,
-        read_timeout: settings.readTimeout,
-        retries: settings.retries,
-      });
-      onClose();
-    } catch (error) {
-      console.error('Failed to start download:', error);
-    } finally {
-      setLoading(false);
     }
   };
 

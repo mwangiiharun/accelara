@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react';
 import { useSettings } from '../context/SettingsContext';
-import { Sun, Monitor, Sparkles, Folder, Check, Trash2, Loader2, Power, Bug } from 'lucide-react';
+import { Sun, Monitor, Sparkles, Folder, Check, Trash2, Loader2, Power, Bug, RefreshCw, Bell } from 'lucide-react';
 
 export default function SettingsPanel() {
   const { settings, updateSettings } = useSettings();
@@ -398,6 +398,55 @@ export default function SettingsPanel() {
             <p className="text-xs theme-text-tertiary mt-2 text-center">
               No junk data found
             </p>
+          )}
+        </div>
+      </div>
+
+      {/* Update Settings */}
+      <div className="pt-4 border-t theme-border">
+        <h4 className="text-sm font-semibold theme-text-primary mb-3 flex items-center gap-2">
+          <RefreshCw className="w-4 h-4" />
+          Update Settings
+        </h4>
+        
+        <div className="space-y-3">
+          <div className="flex items-center justify-between">
+            <div>
+              <label className="block text-sm font-medium theme-text-secondary">
+                Auto-check for updates
+              </label>
+              <p className="text-xs theme-text-tertiary mt-1">
+                Automatically check for updates on startup and periodically
+              </p>
+            </div>
+            <label className="relative inline-flex items-center cursor-pointer">
+              <input
+                type="checkbox"
+                checked={settings.autoCheckForUpdates !== false}
+                onChange={(e) => handleAutoSaveChange('autoCheckForUpdates', e.target.checked)}
+                className="sr-only peer"
+              />
+              <div className="w-11 h-6 theme-bg-secondary peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-primary-500"></div>
+            </label>
+          </div>
+          
+          {settings.autoCheckForUpdates !== false && (
+            <div>
+              <label className="block text-sm font-medium theme-text-secondary mb-2">
+                Check interval (hours)
+              </label>
+              <input
+                type="number"
+                min="1"
+                max="168"
+                value={settings.updateCheckInterval || 24}
+                onChange={(e) => handleAutoSaveChange('updateCheckInterval', parseInt(e.target.value) || 24)}
+                className="input-field w-full"
+              />
+              <p className="text-xs theme-text-tertiary mt-1">
+                How often to check for updates (1-168 hours)
+              </p>
+            </div>
           )}
         </div>
       </div>

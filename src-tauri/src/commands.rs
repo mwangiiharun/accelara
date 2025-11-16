@@ -1,6 +1,7 @@
 use crate::database;
 use crate::download;
 use crate::utils;
+use crate::updater;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::fs;
@@ -296,10 +297,22 @@ pub async fn start_download(
     let conn = database::get_connection()
         .map_err(|e| format!("Database error: {}", e))?;
     
-    let metadata = serde_json::json!({
+    // Extract HTTP info from options if available
+    let mut metadata = serde_json::json!({
         "pause_reason": "Paused - click resume to start",
         "options": config.options,
     });
+    
+    // If HTTP info is provided in options, store it in metadata
+    if let Some(opts) = &config.options {
+        if let Some(http_info) = opts.get("httpInfo") {
+            metadata["httpInfo"] = http_info.clone();
+            // Also extract fileName for easier access
+            if let Some(file_name) = http_info.get("fileName").and_then(|v| v.as_str()) {
+                metadata["fileName"] = serde_json::json!(file_name);
+            }
+        }
+    }
     
     conn.execute(
         "INSERT INTO downloads (id, source, output, type, status, progress, downloaded, total, speed, metadata, started_at, updated_at)
@@ -321,8 +334,12 @@ pub async fn start_download(
     )
     .map_err(|e| format!("Failed to insert download: {}", e))?;
     
+    // Extract fileName and httpInfo from metadata for the event
+    let file_name = metadata.get("fileName").and_then(|v| v.as_str());
+    let http_info = metadata.get("httpInfo").cloned();
+    
     // Emit download update event
-    app.emit("download-update", serde_json::json!({
+    let mut event_data = serde_json::json!({
         "downloadId": download_id,
         "download_id": download_id,
         "source": config.source,
@@ -334,8 +351,21 @@ pub async fn start_download(
         "total": 0,
         "speed": 0,
         "pause_reason": "Paused - click resume to start",
-    }))
+    });
+    
+    if let Some(name) = file_name {
+        event_data["fileName"] = serde_json::json!(name);
+    }
+    if let Some(info) = http_info {
+        event_data["httpInfo"] = info;
+    }
+    
+    app.emit("download-update", event_data)
     .map_err(|e| format!("Failed to emit event: {}", e))?;
+    
+    use crate::logger;
+    logger::log_info("start_download", &format!("Created download {} with status 'paused' (type: {})", download_id, download_type));
+    logger::log_info("start_download", &format!("Source: {}, Output: {}", config.source, output_path));
     
     Ok(download_id)
 }
@@ -476,9 +506,10 @@ pub async fn auto_resume_downloads(app: tauri::AppHandle) {
             }
         };
         
-        // Find all downloads that were in "downloading" state
+        // Find all downloads that were in "downloading" or "paused" state
+        // (paused downloads should also be resumed if they have progress)
         let mut stmt = match conn.prepare(
-            "SELECT id FROM downloads WHERE status = 'downloading' ORDER BY started_at ASC"
+            "SELECT id FROM downloads WHERE status IN ('downloading', 'paused') ORDER BY started_at ASC"
         ) {
             Ok(stmt) => stmt,
             Err(e) => {
@@ -842,7 +873,15 @@ pub async fn resume_download(
     download_id: String,
     app: tauri::AppHandle,
 ) -> Result<(), String> {
-    resume_download_internal(download_id, app).await
+    use crate::logger;
+    logger::log_info("resume_download", &format!("Resume requested for download: {}", download_id));
+    let result = resume_download_internal(download_id.clone(), app).await;
+    if let Err(ref e) = result {
+        logger::log_error("resume_download", &format!("Failed to resume download {}: {}", download_id, e));
+    } else {
+        logger::log_info("resume_download", &format!("Successfully initiated resume for download: {}", download_id));
+    }
+    result
 }
 
 // Handler 8: get-active-downloads
@@ -1302,6 +1341,8 @@ pub async fn get_settings() -> Result<serde_json::Value, String> {
         "readTimeout": 60,
         "retries": 5,
         "torrentPort": 42069,
+        "autoCheckForUpdates": true,
+        "updateCheckInterval": 24,
         "defaultDownloadPath": dirs::download_dir()
             .unwrap_or_else(|| dirs::home_dir().unwrap().join("Downloads"))
             .to_string_lossy()
@@ -1626,4 +1667,30 @@ pub async fn get_recent_logs(lines: Option<usize>) -> Result<Vec<String>, String
     } else {
         Err("Could not determine home directory".to_string())
     }
+}
+
+// Handler 26: check-for-updates
+#[command]
+pub async fn check_for_updates() -> Result<updater::UpdateCheckResult, String> {
+    use crate::logger;
+    logger::log_info("check_for_updates", "Checking for updates...");
+    let result = updater::check_for_updates().await;
+    if let Some(ref error) = result.error {
+        logger::log_error("check_for_updates", error);
+    } else if result.has_update {
+        logger::log_info("check_for_updates", &format!("Update available: {} -> {}", result.current_version, result.latest_version));
+    } else {
+        logger::log_info("check_for_updates", "Already on latest version");
+    }
+    Ok(result)
+}
+
+// Handler 27: download-update
+#[command]
+pub async fn download_update(asset_url: String, filename: String) -> Result<String, String> {
+    use crate::logger;
+    logger::log_info("download_update", &format!("Starting download: {}", filename));
+    let path = updater::download_update(&asset_url, &filename).await?;
+    logger::log_info("download_update", &format!("Download complete: {}", path.display()));
+    Ok(path.to_string_lossy().to_string())
 }

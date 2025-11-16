@@ -184,6 +184,31 @@ export const tauriAPI = {
     return await invoke('open_debug_log_window');
   },
 
+  async checkForUpdates() {
+    return await invoke('check_for_updates');
+  },
+
+  async downloadUpdate(assetUrl, filename) {
+    return await invoke('download_update', { assetUrl, filename });
+  },
+
+  onUpdateAvailable(callback) {
+    const key = 'update-available';
+    listen('update-available', (event) => {
+      callback(event.payload);
+    }).then((unlisten) => {
+      this._unlistenFunctions[key] = unlisten;
+    }).catch((err) => {
+      console.error('Failed to set up update-available listener:', err);
+    });
+    return () => {
+      if (this._unlistenFunctions[key]) {
+        this._unlistenFunctions[key]();
+        delete this._unlistenFunctions[key];
+      }
+    };
+  },
+
   // Speed test
   async saveSpeedTestResult(result) {
     const testId = await invoke('save_speed_test_result', { result });
