@@ -451,16 +451,42 @@ jobs:
           
           # Build Tauri app (Tauri handles AppImage creation automatically)
           # beforeBuildCommand is already disabled in previous step
-          # Use /bin/cat explicitly to ensure it's available, or use alternative method
-          npx tauri build --bundles appimage --target x86_64-unknown-linux-gnu > build.log 2>&1 || { /bin/cat build.log 2>/dev/null || /usr/bin/cat build.log 2>/dev/null || echo "Build failed. Log file:"; [ -f build.log ] && while IFS= read -r line; do echo "$line"; done < build.log || true; exit 1; }
+          echo "Building Tauri app for target: x86_64-unknown-linux-gnu"
+          npx tauri build --bundles appimage --target x86_64-unknown-linux-gnu 2>&1 | tee build.log || { echo "Build failed. Last 50 lines of log:"; tail -50 build.log 2>/dev/null || cat build.log 2>/dev/null || echo "No log file found"; exit 1; }
           
-          # Find the AppImage file
-          APPIMAGE=$(find src-tauri/target/release/bundle/appimage -name "*.AppImage" 2>/dev/null | head -1)
+          # Find the AppImage file - check target-specific directory first
+          echo "Searching for AppImage file..."
+          TARGET_DIR="x86_64-unknown-linux-gnu"
+          
+          # Check target-specific directory first (cross-compilation output location)
+          APPIMAGE=$(find "src-tauri/target/$TARGET_DIR/release/bundle/appimage" -name "*.AppImage" 2>/dev/null | head -1)
+          
+          # Fallback to generic release directory (native builds)
+          if [ -z "$APPIMAGE" ]; then
+            echo "AppImage not found in target-specific directory, checking generic release directory..."
+            APPIMAGE=$(find src-tauri/target/release/bundle/appimage -name "*.AppImage" 2>/dev/null | head -1)
+          fi
+          
+          # Final fallback: search entire target directory
+          if [ -z "$APPIMAGE" ]; then
+            echo "AppImage not found in expected locations, searching entire target directory..."
+            APPIMAGE=$(find src-tauri/target -name "*.AppImage" -type f 2>/dev/null | head -1)
+          fi
+          
+          echo "Found AppImage at: $APPIMAGE"
           
           if [ -z "$APPIMAGE" ]; then
             echo "✗ ERROR: AppImage file not found!"
             echo "Searching in bundle directory:"
-            find src-tauri/target/release/bundle -type f 2>/dev/null || echo "No files found"
+            find src-tauri/target/release/bundle -type f 2>/dev/null || echo "No files found in bundle"
+            echo "Searching in entire target directory:"
+            find src-tauri/target -name "*.AppImage" -type f 2>/dev/null || echo "No AppImage files found in target"
+            echo "Listing target/release structure:"
+            ls -la src-tauri/target/release/ 2>/dev/null || echo "target/release not found"
+            echo "Listing target/$TARGET_DIR/release structure:"
+            ls -la "src-tauri/target/$TARGET_DIR/release/" 2>/dev/null || echo "target/$TARGET_DIR/release not found"
+            echo "Last 100 lines of build log:"
+            tail -100 build.log 2>/dev/null || echo "No build log available"
             exit 1
           fi
           
