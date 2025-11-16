@@ -18,6 +18,10 @@ const REQUIRED_BINARIES = [
     'iris'
 ];
 
+// Determine if we're on Windows
+const isWindows = process.platform === 'win32';
+const exeExtension = isWindows ? '.exe' : '';
+
 let errors = [];
 let warnings = [];
 
@@ -48,18 +52,33 @@ REQUIRED_FILES.forEach(file => {
 // Check Go binaries
 console.log('\n🔍 Verifying Go binaries...');
 REQUIRED_BINARIES.forEach(binary => {
+    // Check both with and without .exe extension (for Windows)
     const binPath = path.join(BIN_DIR, binary);
+    const binPathExe = path.join(BIN_DIR, binary + exeExtension);
     
-    if (!fs.existsSync(binPath)) {
-        errors.push(`Required binary missing: ${binary} (not found in bin/)`);
+    // Try the platform-specific name first, then fallback to base name
+    let foundPath = null;
+    if (fs.existsSync(binPathExe)) {
+        foundPath = binPathExe;
+    } else if (fs.existsSync(binPath)) {
+        foundPath = binPath;
+    }
+    
+    if (!foundPath) {
+        errors.push(`Required binary missing: ${binary}${exeExtension} (not found in bin/)`);
     } else {
-        // Check if executable
-        try {
-            fs.accessSync(binPath, fs.constants.X_OK);
-            console.log(`  ✓ ${binary}`);
-        } catch (err) {
-            warnings.push(`${binary} exists but is not executable`);
-            console.log(`  ⚠️  ${binary} (not executable)`);
+        // On Unix-like systems, check if executable
+        if (!isWindows) {
+            try {
+                fs.accessSync(foundPath, fs.constants.X_OK);
+                console.log(`  ✓ ${binary}`);
+            } catch (err) {
+                warnings.push(`${binary} exists but is not executable`);
+                console.log(`  ⚠️  ${binary} (not executable)`);
+            }
+        } else {
+            // On Windows, just check if file exists
+            console.log(`  ✓ ${binary}${exeExtension}`);
         }
     }
 });
