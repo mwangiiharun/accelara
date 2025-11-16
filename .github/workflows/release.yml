@@ -209,11 +209,27 @@ PYTHON_SCRIPT
         if: matrix.platform == 'linux'
         shell: bash
         run: |
-          # Install unsquashfs for AppImage extraction (if not available)
-          if ! command -v unsquashfs &> /dev/null; then
-            echo "Installing squashfs-tools for AppImage extraction..."
-            sudo apt-get update -qq && sudo apt-get install -y squashfs-tools 2>/dev/null || echo "⚠ Could not install squashfs-tools"
-          fi
+          # Install GTK/GLib and other system dependencies required for Tauri on Linux
+          echo "Installing system dependencies for Tauri Linux build..."
+          sudo apt-get update -qq
+          sudo apt-get install -y \
+            libwebkit2gtk-4.1-dev \
+            build-essential \
+            curl \
+            wget \
+            file \
+            libssl-dev \
+            libgtk-3-dev \
+            libayatana-appindicator3-dev \
+            librsvg2-dev \
+            libjavascriptcoregtk-4.1-dev \
+            pkg-config \
+            squashfs-tools || echo "⚠ Some packages may have failed to install"
+          
+          # Verify critical packages
+          pkg-config --exists glib-2.0 && echo "✓ glib-2.0 found" || echo "✗ glib-2.0 not found"
+          pkg-config --exists gobject-2.0 && echo "✓ gobject-2.0 found" || echo "✗ gobject-2.0 not found"
+          pkg-config --exists gtk+-3.0 && echo "✓ gtk+-3.0 found" || echo "✗ gtk+-3.0 not found"
       
       - name: Verify build prerequisites
         if: matrix.platform == 'linux'
