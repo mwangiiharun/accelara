@@ -419,6 +419,7 @@ jobs:
           PATH: /usr/bin:/bin:/usr/local/bin:${{ env.PATH }}:$HOME/.cargo/bin
           SHELL: /bin/bash
         run: |
+          set +e  # Don't exit on error immediately - we'll handle errors explicitly
           export PATH="/usr/bin:/bin:/usr/local/bin:$HOME/.cargo/bin:$PATH"
           export SHELL="/bin/bash"
           echo "=== Building Linux AppImage ==="
@@ -430,12 +431,9 @@ jobs:
           if [ -f /bin/sh ]; then
             echo "✓ /bin/sh exists"
             # Try to get version, but don't fail if it doesn't support --version (e.g., dash)
-            # Use a simpler check that won't fail
-            if readlink -f /bin/sh >/dev/null 2>&1; then
-              echo "sh: $(readlink -f /bin/sh)"
-            else
-              echo "sh: /bin/sh (dash or similar)"
-            fi
+            # Use a simpler check that won't fail - just show what sh points to
+            SH_LINK=$(readlink /bin/sh 2>/dev/null || echo "unknown")
+            echo "sh points to: $SH_LINK"
           fi
           
           # Verify prerequisites before building
