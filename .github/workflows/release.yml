@@ -9,7 +9,7 @@ on:
 jobs:
   build:
     runs-on: ${{ matrix.os }}
-    timeout-minutes: 90
+    timeout-minutes: 120
 
     strategy:
       matrix:
@@ -275,7 +275,7 @@ jobs:
 
       - name: Build Tauri App (macOS)
         if: matrix.platform == 'mac'
-        timeout-minutes: 60
+        timeout-minutes: 90
         shell: bash
         env:
           PATH: /usr/bin:/bin:/usr/local/bin:${{ env.PATH }}:$HOME/.cargo/bin
@@ -376,7 +376,7 @@ jobs:
 
       - name: Build Tauri App (Windows)
         if: matrix.platform == 'win'
-        timeout-minutes: 60
+        timeout-minutes: 90
         shell: bash
         env:
           PATH: /usr/bin:/bin:/usr/local/bin:${{ env.PATH }}:$HOME/.cargo/bin
@@ -400,7 +400,7 @@ jobs:
 
       - name: Build Tauri App (Linux)
         if: matrix.platform == 'linux'
-        timeout-minutes: 60
+        timeout-minutes: 90
         shell: bash
         env:
           PATH: /usr/bin:/bin:/usr/local/bin:${{ env.PATH }}:$HOME/.cargo/bin
