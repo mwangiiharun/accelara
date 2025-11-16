@@ -430,7 +430,12 @@ jobs:
           if [ -f /bin/sh ]; then
             echo "✓ /bin/sh exists"
             # Try to get version, but don't fail if it doesn't support --version (e.g., dash)
-            /bin/sh -c 'echo "sh: $(readlink -f /bin/sh 2>/dev/null || echo /bin/sh)"' 2>/dev/null || echo "sh version check skipped (may be dash)"
+            # Use a simpler check that won't fail
+            if readlink -f /bin/sh >/dev/null 2>&1; then
+              echo "sh: $(readlink -f /bin/sh)"
+            else
+              echo "sh: /bin/sh (dash or similar)"
+            fi
           fi
           
           # Verify prerequisites before building
