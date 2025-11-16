@@ -176,9 +176,9 @@ jobs:
             
             # Build Tauri app (Tauri handles DMG creation automatically)
             if [ "${{ matrix.goarch }}" == "amd64" ]; then
-              npx tauri build --bundles dmg --target x86_64-apple-darwin > build.log 2>&1 || (cat build.log && exit 1)
+              npx tauri build --bundles dmg --target x86_64-apple-darwin > build.log 2>&1 || { /bin/cat build.log 2>/dev/null || /usr/bin/cat build.log 2>/dev/null || echo "Build failed. Log file:"; [ -f build.log ] && while IFS= read -r line; do echo "$line"; done < build.log || true; exit 1; }
             else
-              npx tauri build --bundles dmg --target aarch64-apple-darwin > build.log 2>&1 || (cat build.log && exit 1)
+              npx tauri build --bundles dmg --target aarch64-apple-darwin > build.log 2>&1 || { /bin/cat build.log 2>/dev/null || /usr/bin/cat build.log 2>/dev/null || echo "Build failed. Log file:"; [ -f build.log ] && while IFS= read -r line; do echo "$line"; done < build.log || true; exit 1; }
             fi
             
             # Find the DMG file
@@ -230,7 +230,7 @@ jobs:
         run: |
           echo "=== Building Windows installer ==="
           export PATH="$HOME/.cargo/bin:$PATH"
-          npx tauri build --bundles msi --target x86_64-pc-windows-msvc > build.log 2>&1 || (cat build.log && exit 1)
+          npx tauri build --bundles msi --target x86_64-pc-windows-msvc > build.log 2>&1 || { /bin/cat build.log 2>/dev/null || /usr/bin/cat build.log 2>/dev/null || echo "Build failed. Log file:"; [ -f build.log ] && while IFS= read -r line; do echo "$line"; done < build.log || true; exit 1; }
           echo ""
           echo "=== Windows build output ==="
           if [ -d "src-tauri/target/release/bundle" ]; then
@@ -261,7 +261,8 @@ jobs:
           fi
           
           # Build Tauri app (Tauri handles AppImage creation automatically)
-          npx tauri build --bundles appimage --target x86_64-unknown-linux-gnu > build.log 2>&1 || (cat build.log && exit 1)
+          # Use /bin/cat explicitly to ensure it's available, or use alternative method
+          npx tauri build --bundles appimage --target x86_64-unknown-linux-gnu > build.log 2>&1 || { /bin/cat build.log 2>/dev/null || /usr/bin/cat build.log 2>/dev/null || echo "Build failed. Log file:"; [ -f build.log ] && while IFS= read -r line; do echo "$line"; done < build.log || true; exit 1; }
           
           # Find the AppImage file
           APPIMAGE=$(find src-tauri/target/release/bundle/appimage -name "*.AppImage" 2>/dev/null | head -1)
