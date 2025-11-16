@@ -140,14 +140,32 @@ jobs:
         run: |
           # Temporarily disable beforeBuildCommand to prevent PATH issues
           # We already built the frontend in previous steps
-          # Use sed to replace beforeBuildCommand with empty string
+          # Use jq to properly modify JSON, or sed as fallback
           if [ -f "src-tauri/tauri.conf.json" ]; then
             # Backup original config
             cp src-tauri/tauri.conf.json src-tauri/tauri.conf.json.bak
-            # Replace beforeBuildCommand with empty string
-            sed -i.bak 's/"beforeBuildCommand": "[^"]*"/"beforeBuildCommand": ""/' src-tauri/tauri.conf.json || \
-            sed -i '' 's/"beforeBuildCommand": "[^"]*"/"beforeBuildCommand": ""/' src-tauri/tauri.conf.json || \
-            echo "Warning: Could not modify tauri.conf.json, continuing..."
+            
+            # Try using jq first (most reliable for JSON)
+            if command -v jq &> /dev/null; then
+              jq '.build.beforeBuildCommand = ""' src-tauri/tauri.conf.json > src-tauri/tauri.conf.tmp.json && \
+              mv src-tauri/tauri.conf.tmp.json src-tauri/tauri.conf.json && \
+              echo "✓ Disabled beforeBuildCommand using jq"
+            else
+              # Fallback: use sed with a more careful pattern
+              # Match the entire beforeBuildCommand line including the value
+              # This pattern handles multi-line values and escaped quotes
+              sed -i.bak 's/"beforeBuildCommand": ".*"/"beforeBuildCommand": ""/' src-tauri/tauri.conf.json || \
+              sed -i '' 's/"beforeBuildCommand": ".*"/"beforeBuildCommand": ""/' src-tauri/tauri.conf.json || \
+              echo "Warning: Could not modify tauri.conf.json with sed"
+              
+              # Verify JSON is still valid
+              if command -v python3 &> /dev/null; then
+                python3 -m json.tool src-tauri/tauri.conf.json > /dev/null 2>&1 && \
+                echo "✓ JSON is valid after sed modification" || \
+                echo "✗ ERROR: JSON is invalid after sed modification!"
+              fi
+            fi
+            
             echo "Modified beforeBuildCommand in tauri.conf.json"
           fi
 
