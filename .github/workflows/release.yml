@@ -272,10 +272,21 @@ jobs:
         timeout-minutes: 45
         shell: bash
         env:
-          PATH: ${{ env.PATH }}:$HOME/.cargo/bin
+          PATH: /usr/bin:/bin:/usr/local/bin:${{ env.PATH }}:$HOME/.cargo/bin
+          SHELL: /bin/bash
         run: |
-          export PATH="$HOME/.cargo/bin:$PATH"
+          export PATH="/usr/bin:/bin:/usr/local/bin:$HOME/.cargo/bin:$PATH"
+          export SHELL="/bin/bash"
           echo "=== Building Linux AppImage ==="
+          echo "PATH: $PATH"
+          echo "SHELL: $SHELL"
+          echo "Checking for sh:"
+          which sh || echo "sh not found in PATH"
+          ls -la /bin/sh /usr/bin/sh 2>/dev/null || echo "sh not found in standard locations"
+          if [ -f /bin/sh ]; then
+            echo "✓ /bin/sh exists"
+            /bin/sh --version || echo "sh version check failed"
+          fi
           
           # Verify prerequisites before building
           if [ ! -f "bin/api-wrapper" ]; then
@@ -286,6 +297,9 @@ jobs:
             echo "✗ ERROR: dist directory not found!"
             exit 1
           fi
+          
+          # Ensure npm can find sh by setting npm config
+          npm config set script-shell /bin/sh || echo "Warning: Could not set npm script-shell"
           
           # Build Tauri app (Tauri handles AppImage creation automatically)
           # Use /bin/cat explicitly to ensure it's available, or use alternative method
