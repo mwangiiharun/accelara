@@ -362,10 +362,70 @@ pub async fn monitor_download_process_with_streams(
                     }
                 } else if download_type == "torrent" || download_type == "magnet" {
                     // Torrent downloads: Check if files exist in the output directory
-                    // Torrents write directly to final locations (no .part files)
+                    // The torrent library may write files with .part extensions that need to be renamed
+                    fn remove_part_extensions(dir: &std::path::Path) -> Result<(), std::io::Error> {
+                        if !dir.exists() {
+                            return Ok(());
+                        }
+                        
+                        let mut renamed_count = 0;
+                        let entries = std::fs::read_dir(dir)?;
+                        for entry in entries {
+                            let entry = entry?;
+                            let path = entry.path();
+                            
+                            if path.is_dir() {
+                                // Recursively check subdirectories
+                                remove_part_extensions(&path)?;
+                            } else if path.is_file() {
+                                // Check if file has .part extension
+                                if let Some(file_name) = path.file_name() {
+                                    let file_name_str = file_name.to_string_lossy();
+                                    if file_name_str.ends_with(".part") {
+                                        // Remove .part extension
+                                        let new_path = path.parent()
+                                            .unwrap_or_else(|| std::path::Path::new("."))
+                                            .join(&file_name_str[..file_name_str.len() - 5]);
+                                        
+                                        // Check if target already exists
+                                        if !new_path.exists() {
+                                            if let Err(e) = std::fs::rename(&path, &new_path) {
+                                                eprintln!("[monitor] Failed to rename {} to {}: {}", 
+                                                    path.display(), new_path.display(), e);
+                                            } else {
+                                                renamed_count += 1;
+                                                eprintln!("[monitor] Renamed {} to {}", 
+                                                    path.display(), new_path.display());
+                                            }
+                                        } else {
+                                            // Target exists, remove .part file
+                                            if let Err(e) = std::fs::remove_file(&path) {
+                                                eprintln!("[monitor] Failed to remove .part file {}: {}", 
+                                                    path.display(), e);
+                                            } else {
+                                                eprintln!("[monitor] Removed .part file {} (target already exists)", 
+                                                    path.display());
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                        
+                        if renamed_count > 0 {
+                            eprintln!("[monitor] Renamed {} .part file(s) in {}", renamed_count, dir.display());
+                        }
+                        
+                        Ok(())
+                    }
+                    
                     if output_path.exists() {
                         if output_path.is_dir() {
-                            // Multi-file torrent - check if directory has files
+                            // Multi-file torrent - check if directory has files and remove .part extensions
+                            remove_part_extensions(&output_path).unwrap_or_else(|e| {
+                                eprintln!("[monitor] Error removing .part extensions: {}", e);
+                            });
+                            
                             let mut has_files = false;
                             if let Ok(entries) = std::fs::read_dir(output_path) {
                                 for entry in entries.flatten() {
@@ -382,8 +442,43 @@ pub async fn monitor_download_process_with_streams(
                                 eprintln!("[monitor] Warning: Torrent directory exists but is empty: {}", expanded_output);
                             }
                         } else {
-                            // Single-file torrent
+                            // Single-file torrent - check if it has .part extension
                             if output_path.is_file() {
+                                if let Some(file_name) = output_path.file_name() {
+                                    let file_name_str = file_name.to_string_lossy();
+                                    if file_name_str.ends_with(".part") {
+                                        // Remove .part extension
+                                        let new_path = output_path.parent()
+                                            .unwrap_or_else(|| std::path::Path::new("."))
+                                            .join(&file_name_str[..file_name_str.len() - 5]);
+                                        
+                                        if !new_path.exists() {
+                                            if let Err(e) = std::fs::rename(&output_path, &new_path) {
+                                                eprintln!("[monitor] Failed to rename {} to {}: {}", 
+                                                    output_path.display(), new_path.display(), e);
+                                            } else {
+                                                eprintln!("[monitor] Renamed {} to {}", 
+                                                    output_path.display(), new_path.display());
+                                                // Update output path in database
+                                                if let Ok(conn) = database::get_connection() {
+                                                    let _ = conn.execute(
+                                                        "UPDATE downloads SET output = ? WHERE id = ?",
+                                                        rusqlite::params![new_path.to_string_lossy().to_string(), download_id],
+                                                    );
+                                                }
+                                            }
+                                        } else {
+                                            // Target exists, remove .part file
+                                            if let Err(e) = std::fs::remove_file(&output_path) {
+                                                eprintln!("[monitor] Failed to remove .part file {}: {}", 
+                                                    output_path.display(), e);
+                                            } else {
+                                                eprintln!("[monitor] Removed .part file {} (target already exists)", 
+                                                    output_path.display());
+                                            }
+                                        }
+                                    }
+                                }
                                 eprintln!("[monitor] ✓ Torrent download completed successfully: {}", expanded_output);
                             } else {
                                 eprintln!("[monitor] Warning: Torrent file path exists but is not a file: {}", expanded_output);
@@ -399,6 +494,11 @@ pub async fn monitor_download_process_with_streams(
                                     let path = entry.path();
                                     if path.is_dir() {
                                         eprintln!("[monitor] Found potential torrent directory: {}", path.display());
+                                        // Check and remove .part extensions in this directory
+                                        remove_part_extensions(&path).unwrap_or_else(|e| {
+                                            eprintln!("[monitor] Error removing .part extensions from {}: {}", 
+                                                path.display(), e);
+                                        });
                                     }
                                 }
                             }
