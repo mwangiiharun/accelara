@@ -73,6 +73,7 @@ jobs:
             ${{ runner.os }}-cargo-
 
       - name: Build Go binaries
+        timeout-minutes: 10
         shell: bash
         env:
           GOOS: ${{ matrix.goos }}
@@ -241,6 +242,7 @@ jobs:
 
       - name: Build Tauri App (Linux)
         if: matrix.platform == 'linux'
+        timeout-minutes: 45
         shell: bash
         env:
           PATH: ${{ env.PATH }}:$HOME/.cargo/bin
