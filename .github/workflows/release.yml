@@ -348,10 +348,18 @@ jobs:
             echo "✓ DMG created: $DMG_PATH"
             ls -lh "$DMG_PATH"
             
+            # Find app bundle for code signing (check target-specific directory first)
+            APP_BUNDLE=$(find "src-tauri/target/$TARGET_DIR/release/bundle/macos" -name "*.app" -type d 2>/dev/null | head -1)
+            # Fallback to generic release directory
+            if [ -z "$APP_BUNDLE" ]; then
+              APP_BUNDLE=$(find src-tauri/target/release/bundle/macos -name "*.app" -type d 2>/dev/null | head -1)
+            fi
+            
             # Remove quarantine attributes and ad-hoc code sign the app bundle
             # This prevents "damaged and can't be opened" errors
             if [ -n "$APP_BUNDLE" ]; then
               echo "=== Removing quarantine and code signing app bundle ==="
+              echo "App bundle found at: $APP_BUNDLE"
               
               # Remove quarantine attribute (if present)
               xattr -cr "$APP_BUNDLE" 2>/dev/null || echo "Warning: Could not remove quarantine attributes"
@@ -364,11 +372,9 @@ jobs:
               codesign --verify --verbose "$APP_BUNDLE" 2>/dev/null || echo "Warning: Code signature verification failed"
               
               echo "✓ App bundle prepared (quarantine removed, ad-hoc signed)"
-            fi
-            
-            # Recreate DMG with the fixed app bundle
-            echo "=== Recreating DMG with fixed app bundle ==="
-            if [ -n "$APP_BUNDLE" ]; then
+              
+              # Recreate DMG with the fixed app bundle
+              echo "=== Recreating DMG with fixed app bundle ==="
               # Create a temporary directory for DMG contents
               TEMP_DMG_DIR=$(mktemp -d)
               cp -R "$APP_BUNDLE" "$TEMP_DMG_DIR/"
@@ -388,6 +394,8 @@ jobs:
               rm -rf "$TEMP_DMG_DIR"
               
               echo "✓ DMG recreated with fixed app bundle"
+            else
+              echo "⚠ Warning: App bundle not found for code signing"
             fi
             
             # Copy to release directory with architecture naming
