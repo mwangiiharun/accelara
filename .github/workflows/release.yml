@@ -59,6 +59,15 @@ jobs:
         with:
           toolchain: stable
 
+      - name: Install Rust targets for macOS cross-compilation
+        if: matrix.platform == 'mac' && matrix.goarch == 'amd64'
+        shell: bash
+        run: |
+          echo "Installing x86_64-apple-darwin target for Intel macOS build..."
+          rustup target add x86_64-apple-darwin
+          echo "Installed targets:"
+          rustup target list --installed
+
       - name: Cache Rust dependencies
         uses: actions/cache@v4
         with:
