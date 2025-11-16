@@ -228,11 +228,11 @@ jobs:
             which uname || echo "Warning: uname not found"
             
             # Build Tauri app (Tauri handles DMG creation automatically)
-            # Disable beforeBuildCommand since we already built frontend
+            # beforeBuildCommand is already disabled in previous step
             if [ "${{ matrix.goarch }}" == "amd64" ]; then
-              npx tauri build --bundles dmg --target x86_64-apple-darwin --config '{"build":{"beforeBuildCommand":null}}' > build.log 2>&1 || { /bin/cat build.log 2>/dev/null || /usr/bin/cat build.log 2>/dev/null || echo "Build failed. Log file:"; [ -f build.log ] && while IFS= read -r line; do echo "$line"; done < build.log || true; exit 1; }
+              npx tauri build --bundles dmg --target x86_64-apple-darwin > build.log 2>&1 || { /bin/cat build.log 2>/dev/null || /usr/bin/cat build.log 2>/dev/null || echo "Build failed. Log file:"; [ -f build.log ] && while IFS= read -r line; do echo "$line"; done < build.log || true; exit 1; }
             else
-              npx tauri build --bundles dmg --target aarch64-apple-darwin --config '{"build":{"beforeBuildCommand":null}}' > build.log 2>&1 || { /bin/cat build.log 2>/dev/null || /usr/bin/cat build.log 2>/dev/null || echo "Build failed. Log file:"; [ -f build.log ] && while IFS= read -r line; do echo "$line"; done < build.log || true; exit 1; }
+              npx tauri build --bundles dmg --target aarch64-apple-darwin > build.log 2>&1 || { /bin/cat build.log 2>/dev/null || /usr/bin/cat build.log 2>/dev/null || echo "Build failed. Log file:"; [ -f build.log ] && while IFS= read -r line; do echo "$line"; done < build.log || true; exit 1; }
             fi
             
             # Find the DMG file
@@ -280,10 +280,15 @@ jobs:
         timeout-minutes: 45
         shell: bash
         env:
-          PATH: ${{ env.PATH }}:$HOME/.cargo/bin
+          PATH: /usr/bin:/bin:/usr/local/bin:${{ env.PATH }}:$HOME/.cargo/bin
+          SHELL: /bin/bash
         run: |
           echo "=== Building Windows installer ==="
-          export PATH="$HOME/.cargo/bin:$PATH"
+          export PATH="/usr/bin:/bin:/usr/local/bin:$HOME/.cargo/bin:$PATH"
+          export SHELL="/bin/bash"
+          # Ensure npm can find sh
+          npm config set script-shell /bin/sh || echo "Warning: Could not set npm script-shell"
+          # beforeBuildCommand is already disabled in previous step
           npx tauri build --bundles msi --target x86_64-pc-windows-msvc > build.log 2>&1 || { /bin/cat build.log 2>/dev/null || /usr/bin/cat build.log 2>/dev/null || echo "Build failed. Log file:"; [ -f build.log ] && while IFS= read -r line; do echo "$line"; done < build.log || true; exit 1; }
           echo ""
           echo "=== Windows build output ==="
