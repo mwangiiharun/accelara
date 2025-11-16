@@ -385,6 +385,7 @@ jobs:
             fi
             
             echo "✓ macOS build completed successfully"
+            exit 0  # Explicitly exit with success code
 
       - name: Build Tauri App (Windows)
         if: matrix.platform == 'win'
