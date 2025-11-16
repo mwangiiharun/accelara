@@ -135,12 +135,31 @@ jobs:
           npm config set script-shell /bin/sh || echo "Warning: Could not set npm script-shell"
           npm run verify:resources
 
+      - name: Install jq (for JSON manipulation)
+        shell: bash
+        run: |
+          # Install jq for reliable JSON manipulation
+          if ! command -v jq &> /dev/null; then
+            if [[ "$RUNNER_OS" == "Linux" ]]; then
+              sudo apt-get update -qq && sudo apt-get install -y jq
+            elif [[ "$RUNNER_OS" == "macOS" ]]; then
+              brew install jq || echo "Warning: Could not install jq via brew"
+            elif [[ "$RUNNER_OS" == "Windows" ]]; then
+              choco install jq -y || echo "Warning: Could not install jq via choco"
+            fi
+          fi
+          # Verify jq is available
+          if command -v jq &> /dev/null; then
+            echo "✓ jq is available: $(jq --version)"
+          else
+            echo "⚠ Warning: jq is not available, will use Python fallback"
+          fi
+
       - name: Disable beforeBuildCommand for CI builds
         shell: bash
         run: |
           # Temporarily disable beforeBuildCommand to prevent PATH issues
           # We already built the frontend in previous steps
-          # Use jq to properly modify JSON, or sed as fallback
           if [ -f "src-tauri/tauri.conf.json" ]; then
             # Backup original config
             cp src-tauri/tauri.conf.json src-tauri/tauri.conf.json.bak
@@ -150,19 +169,36 @@ jobs:
               jq '.build.beforeBuildCommand = ""' src-tauri/tauri.conf.json > src-tauri/tauri.conf.tmp.json && \
               mv src-tauri/tauri.conf.tmp.json src-tauri/tauri.conf.json && \
               echo "✓ Disabled beforeBuildCommand using jq"
+            elif command -v python3 &> /dev/null; then
+              # Use Python to properly modify JSON
+              python3 << 'PYTHON_SCRIPT'
+import json
+import sys
+
+with open('src-tauri/tauri.conf.json', 'r') as f:
+    config = json.load(f)
+
+config['build']['beforeBuildCommand'] = ''
+
+with open('src-tauri/tauri.conf.json', 'w') as f:
+    json.dump(config, f, indent=2)
+
+print("✓ Disabled beforeBuildCommand using Python")
+PYTHON_SCRIPT
             else
-              # Fallback: use sed with a more careful pattern
-              # Match the entire beforeBuildCommand line including the value
-              # This pattern handles multi-line values and escaped quotes
-              sed -i.bak 's/"beforeBuildCommand": ".*"/"beforeBuildCommand": ""/' src-tauri/tauri.conf.json || \
-              sed -i '' 's/"beforeBuildCommand": ".*"/"beforeBuildCommand": ""/' src-tauri/tauri.conf.json || \
-              echo "Warning: Could not modify tauri.conf.json with sed"
+              # Last resort: use sed with a pattern that handles escaped quotes
+              # This is tricky because sed doesn't understand JSON escaping
+              # We'll match from "beforeBuildCommand": " to the closing " before the comma
+              perl -i -pe 's/"beforeBuildCommand": "[^"]*(?:\\.[^"]*)*"/"beforeBuildCommand": ""/' src-tauri/tauri.conf.json 2>/dev/null || \
+              sed -i.bak 's/"beforeBuildCommand": "[^"]*"/"beforeBuildCommand": ""/' src-tauri/tauri.conf.json || \
+              sed -i '' 's/"beforeBuildCommand": "[^"]*"/"beforeBuildCommand": ""/' src-tauri/tauri.conf.json || \
+              echo "✗ ERROR: Could not modify tauri.conf.json"
               
               # Verify JSON is still valid
               if command -v python3 &> /dev/null; then
                 python3 -m json.tool src-tauri/tauri.conf.json > /dev/null 2>&1 && \
-                echo "✓ JSON is valid after sed modification" || \
-                echo "✗ ERROR: JSON is invalid after sed modification!"
+                echo "✓ JSON is valid after modification" || \
+                (echo "✗ ERROR: JSON is invalid after modification!" && cat src-tauri/tauri.conf.json && exit 1)
               fi
             fi
             
