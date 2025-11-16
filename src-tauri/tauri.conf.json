@@ -6,8 +6,8 @@
   "build": {
     "frontendDist": "../dist",
     "devUrl": "http://localhost:5174",
-    "beforeDevCommand": "make build-api && npm run dev:react",
-    "beforeBuildCommand": "make build-api && npm run build:react"
+    "beforeDevCommand": "export PATH=\"/usr/bin:/bin:/usr/local/bin:$HOME/.cargo/bin:$PATH\" && make build-api && npm run dev:react",
+    "beforeBuildCommand": "export PATH=\"/usr/bin:/bin:/usr/local/bin:$HOME/.cargo/bin:$PATH\" && make build-api && npm run build:react"
   },
   "app": {
     "windows": [
