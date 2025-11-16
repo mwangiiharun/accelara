@@ -103,24 +103,36 @@ jobs:
         shell: bash
         env:
           PATH: /usr/bin:/bin:/usr/local/bin:${{ env.PATH }}
+          SHELL: /bin/bash
         run: |
           export PATH="/usr/bin:/bin:/usr/local/bin:$PATH"
+          export SHELL="/bin/bash"
+          # Ensure npm can find sh
+          npm config set script-shell /bin/sh || echo "Warning: Could not set npm script-shell"
           npm ci
 
       - name: Build Frontend
         shell: bash
         env:
           PATH: /usr/bin:/bin:/usr/local/bin:${{ env.PATH }}
+          SHELL: /bin/bash
         run: |
           export PATH="/usr/bin:/bin:/usr/local/bin:$PATH"
+          export SHELL="/bin/bash"
+          # Ensure npm can find sh
+          npm config set script-shell /bin/sh || echo "Warning: Could not set npm script-shell"
           npm run build:react
 
       - name: Verify Resources
         shell: bash
         env:
           PATH: /usr/bin:/bin:/usr/local/bin:${{ env.PATH }}
+          SHELL: /bin/bash
         run: |
           export PATH="/usr/bin:/bin:/usr/local/bin:$PATH"
+          export SHELL="/bin/bash"
+          # Ensure npm can find sh
+          npm config set script-shell /bin/sh || echo "Warning: Could not set npm script-shell"
           npm run verify:resources
 
       - name: Install Linux build dependencies
