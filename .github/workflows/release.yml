@@ -135,6 +135,22 @@ jobs:
           npm config set script-shell /bin/sh || echo "Warning: Could not set npm script-shell"
           npm run verify:resources
 
+      - name: Disable beforeBuildCommand for CI builds
+        shell: bash
+        run: |
+          # Temporarily disable beforeBuildCommand to prevent PATH issues
+          # We already built the frontend in previous steps
+          # Use sed to replace beforeBuildCommand with empty string
+          if [ -f "src-tauri/tauri.conf.json" ]; then
+            # Backup original config
+            cp src-tauri/tauri.conf.json src-tauri/tauri.conf.json.bak
+            # Replace beforeBuildCommand with empty string
+            sed -i.bak 's/"beforeBuildCommand": "[^"]*"/"beforeBuildCommand": ""/' src-tauri/tauri.conf.json || \
+            sed -i '' 's/"beforeBuildCommand": "[^"]*"/"beforeBuildCommand": ""/' src-tauri/tauri.conf.json || \
+            echo "Warning: Could not modify tauri.conf.json, continuing..."
+            echo "Modified beforeBuildCommand in tauri.conf.json"
+          fi
+
       - name: Install Linux build dependencies
         if: matrix.platform == 'linux'
         shell: bash
