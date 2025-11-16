@@ -100,13 +100,28 @@ jobs:
           ls -lh bin/ || true
 
       - name: Install Node Deps
-        run: npm ci
+        shell: bash
+        env:
+          PATH: /usr/bin:/bin:/usr/local/bin:${{ env.PATH }}
+        run: |
+          export PATH="/usr/bin:/bin:/usr/local/bin:$PATH"
+          npm ci
 
       - name: Build Frontend
-        run: npm run build:react
+        shell: bash
+        env:
+          PATH: /usr/bin:/bin:/usr/local/bin:${{ env.PATH }}
+        run: |
+          export PATH="/usr/bin:/bin:/usr/local/bin:$PATH"
+          npm run build:react
 
       - name: Verify Resources
-        run: npm run verify:resources
+        shell: bash
+        env:
+          PATH: /usr/bin:/bin:/usr/local/bin:${{ env.PATH }}
+        run: |
+          export PATH="/usr/bin:/bin:/usr/local/bin:$PATH"
+          npm run verify:resources
 
       - name: Install Linux build dependencies
         if: matrix.platform == 'linux'
