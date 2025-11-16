@@ -293,9 +293,16 @@ jobs:
             which npm || echo "Warning: npm not found"
             which uname || echo "Warning: uname not found"
             
+            # Determine target directory based on architecture
+            if [ "${{ matrix.goarch }}" == "amd64" ]; then
+              TARGET_DIR="x86_64-apple-darwin"
+            else
+              TARGET_DIR="aarch64-apple-darwin"
+            fi
+            
             # Build Tauri app (Tauri handles DMG creation automatically)
             # beforeBuildCommand is already disabled in previous step
-            echo "Building Tauri app for target: ${{ matrix.goarch == 'amd64' && 'x86_64-apple-darwin' || 'aarch64-apple-darwin' }}"
+            echo "Building Tauri app for target: $TARGET_DIR"
             if [ "${{ matrix.goarch }}" == "amd64" ]; then
               npx tauri build --bundles dmg --target x86_64-apple-darwin 2>&1 | tee build.log || { echo "Build failed. Last 50 lines of log:"; tail -50 build.log 2>/dev/null || cat build.log 2>/dev/null || echo "No log file found"; exit 1; }
             else
@@ -304,13 +311,6 @@ jobs:
             
             # Find the DMG file - check target-specific directory first (for cross-compilation)
             echo "Searching for DMG file..."
-            
-            # Determine target directory based on architecture
-            if [ "${{ matrix.goarch }}" == "amd64" ]; then
-              TARGET_DIR="x86_64-apple-darwin"
-            else
-              TARGET_DIR="aarch64-apple-darwin"
-            fi
             
             # Check target-specific directory first (cross-compilation output location)
             DMG_PATH=$(find "src-tauri/target/$TARGET_DIR/release/bundle/dmg" -name "*.dmg" 2>/dev/null | head -1)
@@ -354,10 +354,15 @@ jobs:
             echo "✓ Copied to: $ARCH_DMG"
             ls -lh "$ARCH_DMG"
             
-            # Verify binaries in app bundle
-            APP_BUNDLE=$(find src-tauri/target/release/bundle/macos -name "*.app" -type d 2>/dev/null | head -1)
+            # Verify binaries in app bundle - check target-specific directory first
+            APP_BUNDLE=$(find "src-tauri/target/$TARGET_DIR/release/bundle/macos" -name "*.app" -type d 2>/dev/null | head -1)
+            # Fallback to generic release directory
+            if [ -z "$APP_BUNDLE" ]; then
+              APP_BUNDLE=$(find src-tauri/target/release/bundle/macos -name "*.app" -type d 2>/dev/null | head -1)
+            fi
             if [ -n "$APP_BUNDLE" ]; then
               echo "=== Verifying binaries in app bundle ==="
+              echo "App bundle found at: $APP_BUNDLE"
               BIN_PATH="$APP_BUNDLE/Contents/Resources/bin"
               if [ -d "$BIN_PATH" ]; then
                 echo "✓ Bin directory found: $BIN_PATH"
@@ -366,10 +371,16 @@ jobs:
                   echo "✓ All binaries verified"
                 else
                   echo "⚠ Warning: Some binaries missing (Tauri should have bundled them)"
+                  echo "Files in bin directory:"
+                  ls -la "$BIN_PATH" 2>/dev/null || echo "Could not list bin directory"
                 fi
               else
                 echo "⚠ Warning: Bin directory not found (Tauri should have created it)"
+                echo "Contents of Resources directory:"
+                ls -la "$APP_BUNDLE/Contents/Resources" 2>/dev/null || echo "Could not list Resources directory"
               fi
+            else
+              echo "⚠ Warning: App bundle not found for verification"
             fi
             
             echo "✓ macOS build completed successfully"
