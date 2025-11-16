@@ -281,6 +281,7 @@ jobs:
           PATH: /usr/bin:/bin:/usr/local/bin:${{ env.PATH }}:$HOME/.cargo/bin
           SHELL: /bin/bash
         run: |
+            set +e  # Don't exit on error immediately - we'll handle errors explicitly
             echo "=== Building Tauri app ==="
             export PATH="/usr/bin:/bin:/usr/local/bin:$HOME/.cargo/bin:$PATH"
             export SHELL="/bin/bash"
