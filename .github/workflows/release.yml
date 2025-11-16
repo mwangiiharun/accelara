@@ -171,20 +171,7 @@ jobs:
               echo "✓ Disabled beforeBuildCommand using jq"
             elif command -v python3 &> /dev/null; then
               # Use Python to properly modify JSON
-              python3 -c "
-import json
-import sys
-
-with open('src-tauri/tauri.conf.json', 'r') as f:
-    config = json.load(f)
-
-config['build']['beforeBuildCommand'] = ''
-
-with open('src-tauri/tauri.conf.json', 'w') as f:
-    json.dump(config, f, indent=2)
-
-print('✓ Disabled beforeBuildCommand using Python')
-"
+              python3 -c "import json; f = open('src-tauri/tauri.conf.json', 'r'); config = json.load(f); f.close(); config['build']['beforeBuildCommand'] = ''; f = open('src-tauri/tauri.conf.json', 'w'); json.dump(config, f, indent=2); f.close(); print('✓ Disabled beforeBuildCommand using Python')"
             else
               # Last resort: use sed with a pattern that handles escaped quotes
               # This is tricky because sed doesn't understand JSON escaping
