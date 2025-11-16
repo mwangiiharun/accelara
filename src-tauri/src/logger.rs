@@ -41,37 +41,32 @@ fn check_and_clean_logs() {
                 if metadata.len() > MAX_LOG_SIZE {
                     // Rotate: keep last 5MB of logs
                     const KEEP_SIZE: u64 = 5 * 1024 * 1024; // 5MB
-                    if let Ok(mut file) = fs::File::open(&log_path) {
-                        use std::io::{Seek, SeekFrom, BufRead, BufReader};
-                        if let Ok(metadata) = file.metadata() {
-                            let total_size = metadata.len();
-                            if total_size > KEEP_SIZE {
-                                // Seek to position where we want to keep from
-                                let skip_bytes = total_size - KEEP_SIZE;
-                                if file.seek(SeekFrom::Start(skip_bytes)).is_ok() {
-                                    let reader = BufReader::new(&file);
-                                    // Find the first complete line (skip partial line)
-                                    let mut lines = reader.lines();
-                                    if lines.next().is_some() {
-                                        // We found a line, now read the rest
-                                        let mut keep_content = String::new();
-                                        for line in lines {
-                                            if let Ok(l) = line {
-                                                keep_content.push_str(&l);
-                                                keep_content.push('\n');
-                                            }
-                                        }
-                                        
-                                        // Write the kept content back to the file
-                                        if let Ok(mut file) = fs::File::create(&log_path) {
-                                            let _ = writeln!(file, "\n=== ACCELARA Log Session (Rotated) ===");
-                                            let _ = writeln!(file, "Previous log file exceeded 10MB, kept last 5MB");
-                                            let _ = writeln!(file, "Rotation time: {}", chrono::Local::now().format("%Y-%m-%d %H:%M:%S"));
-                                            let _ = writeln!(file, "{}", keep_content);
-                                            let _ = file.flush();
-                                        }
-                                    }
-                                }
+                    
+                    // Read the file
+                    if let Ok(content) = fs::read_to_string(&log_path) {
+                        let total_size = content.len() as u64;
+                        if total_size > KEEP_SIZE {
+                            // Keep only the last portion
+                            let skip_bytes = (total_size - KEEP_SIZE) as usize;
+                            // Find the next newline to avoid cutting in the middle of a line
+                            let start_pos = if skip_bytes < content.len() {
+                                content[skip_bytes..]
+                                    .find('\n')
+                                    .map(|pos| skip_bytes + pos + 1)
+                                    .unwrap_or(skip_bytes)
+                            } else {
+                                skip_bytes
+                            };
+                            
+                            let kept_content = &content[start_pos..];
+                            
+                            // Write the kept content back to the file with a rotation header
+                            if let Ok(mut file) = fs::File::create(&log_path) {
+                                let _ = writeln!(file, "\n=== ACCELARA Log Session (Rotated) ===");
+                                let _ = writeln!(file, "Previous log file exceeded 10MB, kept last 5MB");
+                                let _ = writeln!(file, "Rotation time: {}", chrono::Local::now().format("%Y-%m-%d %H:%M:%S"));
+                                let _ = writeln!(file, "{}", kept_content);
+                                let _ = file.flush();
                             }
                         }
                     }
@@ -85,13 +80,11 @@ fn check_and_clean_logs() {
 pub fn log_to_file(message: &str) {
     if let Some(log_path) = get_log_path() {
         // Check and clean logs before writing (only check periodically to avoid overhead)
-        // We'll check every 100 writes or so - use a simple counter
-        static mut WRITE_COUNT: u32 = 0;
-        unsafe {
-            WRITE_COUNT += 1;
-            if WRITE_COUNT % 100 == 0 {
-                check_and_clean_logs();
-            }
+        // We'll check every 100 writes or so - use an atomic counter
+        static WRITE_COUNT: AtomicU32 = AtomicU32::new(0);
+        let count = WRITE_COUNT.fetch_add(1, Ordering::Relaxed);
+        if count % 100 == 0 {
+            check_and_clean_logs();
         }
         
         if let Ok(mut file) = OpenOptions::new()
