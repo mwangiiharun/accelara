@@ -313,9 +313,9 @@ jobs:
           npm config set script-shell /bin/sh || echo "Warning: Could not set npm script-shell"
           
           # Build Tauri app (Tauri handles AppImage creation automatically)
-          # Disable beforeBuildCommand since we already built frontend
+          # beforeBuildCommand is already disabled in previous step
           # Use /bin/cat explicitly to ensure it's available, or use alternative method
-          npx tauri build --bundles appimage --target x86_64-unknown-linux-gnu --config '{"build":{"beforeBuildCommand":null}}' > build.log 2>&1 || { /bin/cat build.log 2>/dev/null || /usr/bin/cat build.log 2>/dev/null || echo "Build failed. Log file:"; [ -f build.log ] && while IFS= read -r line; do echo "$line"; done < build.log || true; exit 1; }
+          npx tauri build --bundles appimage --target x86_64-unknown-linux-gnu > build.log 2>&1 || { /bin/cat build.log 2>/dev/null || /usr/bin/cat build.log 2>/dev/null || echo "Build failed. Log file:"; [ -f build.log ] && while IFS= read -r line; do echo "$line"; done < build.log || true; exit 1; }
           
           # Find the AppImage file
           APPIMAGE=$(find src-tauri/target/release/bundle/appimage -name "*.AppImage" 2>/dev/null | head -1)
