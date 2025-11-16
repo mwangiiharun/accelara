@@ -302,20 +302,32 @@ jobs:
               npx tauri build --bundles dmg --target aarch64-apple-darwin 2>&1 | tee build.log || { echo "Build failed. Last 50 lines of log:"; tail -50 build.log 2>/dev/null || cat build.log 2>/dev/null || echo "No log file found"; exit 1; }
             fi
             
-            # Find the DMG file - check multiple possible locations
+            # Find the DMG file - check target-specific directory first (for cross-compilation)
             echo "Searching for DMG file..."
-            DMG_PATH=$(find src-tauri/target/release/bundle/dmg -name "*.dmg" 2>/dev/null | head -1)
             
-            # If not found in expected location, search more broadly
-            if [ -z "$DMG_PATH" ]; then
-              echo "DMG not found in src-tauri/target/release/bundle/dmg, searching more broadly..."
-              DMG_PATH=$(find src-tauri/target -name "*.dmg" 2>/dev/null | head -1)
+            # Determine target directory based on architecture
+            if [ "${{ matrix.goarch }}" == "amd64" ]; then
+              TARGET_DIR="x86_64-apple-darwin"
+            else
+              TARGET_DIR="aarch64-apple-darwin"
             fi
             
-            # Also check for universal binaries
+            # Check target-specific directory first (cross-compilation output location)
+            DMG_PATH=$(find "src-tauri/target/$TARGET_DIR/release/bundle/dmg" -name "*.dmg" 2>/dev/null | head -1)
+            
+            # Fallback to generic release directory (native builds)
             if [ -z "$DMG_PATH" ]; then
+              echo "DMG not found in target-specific directory, checking generic release directory..."
+              DMG_PATH=$(find src-tauri/target/release/bundle/dmg -name "*.dmg" 2>/dev/null | head -1)
+            fi
+            
+            # Final fallback: search entire target directory
+            if [ -z "$DMG_PATH" ]; then
+              echo "DMG not found in expected locations, searching entire target directory..."
               DMG_PATH=$(find src-tauri/target -name "*.dmg" -type f 2>/dev/null | head -1)
             fi
+            
+            echo "Found DMG at: $DMG_PATH"
             
             if [ -z "$DMG_PATH" ]; then
               echo "✗ ERROR: DMG file not found!"
