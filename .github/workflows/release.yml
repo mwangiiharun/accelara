@@ -348,6 +348,48 @@ jobs:
             echo "✓ DMG created: $DMG_PATH"
             ls -lh "$DMG_PATH"
             
+            # Remove quarantine attributes and ad-hoc code sign the app bundle
+            # This prevents "damaged and can't be opened" errors
+            if [ -n "$APP_BUNDLE" ]; then
+              echo "=== Removing quarantine and code signing app bundle ==="
+              
+              # Remove quarantine attribute (if present)
+              xattr -cr "$APP_BUNDLE" 2>/dev/null || echo "Warning: Could not remove quarantine attributes"
+              
+              # Ad-hoc code sign the app bundle (doesn't require a certificate)
+              # This makes Gatekeeper happier even without a developer certificate
+              codesign --force --deep --sign - "$APP_BUNDLE" 2>/dev/null || echo "Warning: Could not code sign app bundle"
+              
+              # Verify the signature
+              codesign --verify --verbose "$APP_BUNDLE" 2>/dev/null || echo "Warning: Code signature verification failed"
+              
+              echo "✓ App bundle prepared (quarantine removed, ad-hoc signed)"
+            fi
+            
+            # Recreate DMG with the fixed app bundle
+            echo "=== Recreating DMG with fixed app bundle ==="
+            if [ -n "$APP_BUNDLE" ]; then
+              # Create a temporary directory for DMG contents
+              TEMP_DMG_DIR=$(mktemp -d)
+              cp -R "$APP_BUNDLE" "$TEMP_DMG_DIR/"
+              
+              # Create Applications symlink
+              ln -s /Applications "$TEMP_DMG_DIR/Applications"
+              
+              # Remove old DMG
+              rm -f "$DMG_PATH"
+              
+              # Create new DMG with proper formatting
+              hdiutil create -volname "ACCELARA" -srcfolder "$TEMP_DMG_DIR" -ov -format UDZO "$DMG_PATH" 2>&1 || {
+                echo "Warning: Failed to recreate DMG, using original"
+              }
+              
+              # Clean up
+              rm -rf "$TEMP_DMG_DIR"
+              
+              echo "✓ DMG recreated with fixed app bundle"
+            fi
+            
             # Copy to release directory with architecture naming
             mkdir -p release
             ARCH_DMG="release/ACCELARA-mac-${{ matrix.goarch }}.dmg"

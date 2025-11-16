@@ -199,6 +199,37 @@ pub async fn install_update(file_path: &PathBuf) -> Result<(), String> {
     
     logger::log_info("updater", &format!("Found app bundle: {}", app_bundle.display()));
     
+    // Remove quarantine attributes from the app bundle in DMG
+    logger::log_info("updater", "Removing quarantine attributes from app bundle...");
+    Command::new("xattr")
+        .arg("-cr")
+        .arg(&app_bundle)
+        .output()
+        .map_err(|e| format!("Failed to remove quarantine: {}", e))?;
+    
+    // Ad-hoc code sign the app bundle (makes Gatekeeper happier)
+    logger::log_info("updater", "Code signing app bundle (ad-hoc)...");
+    let sign_status = Command::new("codesign")
+        .arg("--force")
+        .arg("--deep")
+        .arg("--sign")
+        .arg("-")
+        .arg(&app_bundle)
+        .output();
+    
+    match sign_status {
+        Ok(output) if output.status.success() => {
+            logger::log_info("updater", "App bundle code signed successfully");
+        }
+        Ok(output) => {
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            logger::log_info("updater", &format!("Code signing warning (non-fatal): {}", stderr));
+        }
+        Err(e) => {
+            logger::log_info("updater", &format!("Code signing failed (non-fatal): {}", e));
+        }
+    }
+    
     // Get current app bundle path
     let current_app = std::env::current_exe()
         .map_err(|e| format!("Failed to get current executable: {}", e))?
@@ -233,6 +264,24 @@ pub async fn install_update(file_path: &PathBuf) -> Result<(), String> {
         .map_err(|e| format!("Failed to copy app bundle: {}", e))?;
     
     logger::log_info("updater", "App bundle copied successfully");
+    
+    // Remove quarantine attributes from the copied app (in case they were re-added)
+    logger::log_info("updater", "Removing quarantine attributes from installed app...");
+    Command::new("xattr")
+        .arg("-cr")
+        .arg(&new_app_path)
+        .output()
+        .map_err(|e| format!("Failed to remove quarantine from installed app: {}", e))?;
+    
+    // Ad-hoc code sign the installed app
+    logger::log_info("updater", "Code signing installed app (ad-hoc)...");
+    let _ = Command::new("codesign")
+        .arg("--force")
+        .arg("--deep")
+        .arg("--sign")
+        .arg("-")
+        .arg(&new_app_path)
+        .output();
     
     // Unmount DMG
     Command::new("hdiutil")
