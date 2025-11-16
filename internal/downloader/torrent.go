@@ -217,6 +217,7 @@ func (d *TorrentDownloader) Download() error {
 
 	// Check existing files and their sizes
 	existingBytes := int64(0)
+	dataDir := cfg.DataDir
 	if info.IsDir() {
 		// Multi-file torrent - check if directory exists
 		torrentDir := filepath.Join(dataDir, info.Name)
