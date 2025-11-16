@@ -12,6 +12,8 @@ import (
 
 	"github.com/anacrolix/torrent"
 	"github.com/anacrolix/torrent/metainfo"
+	"github.com/anacrolix/torrent/storage"
+	g "github.com/anacrolix/generics"
 	"golang.org/x/time/rate"
 )
 
@@ -62,11 +64,21 @@ func NewTorrentDownloader(source, outPath string, opts Options) *TorrentDownload
 
 func (d *TorrentDownloader) Download() error {
 	cfg := torrent.NewDefaultClientConfig()
+	var dataDir string
 	if info, err := os.Stat(d.outPath); err == nil && info.IsDir() {
+		dataDir = d.outPath
 		cfg.DataDir = d.outPath
 	} else {
-		cfg.DataDir = filepath.Dir(d.outPath)
+		dataDir = filepath.Dir(d.outPath)
+		cfg.DataDir = dataDir
 	}
+	
+	// Configure storage to NOT use .part extensions for incomplete files
+	// Files should be written directly to their final names
+	cfg.DefaultStorage = storage.NewFileOpts(storage.NewFileClientOpts{
+		ClientBaseDir: dataDir,
+		UsePartFiles:  g.Some(false), // Disable .part extensions
+	})
 
 	if d.uploadLimit > 0 {
 		cfg.UploadRateLimiter = rate.NewLimiter(rate.Limit(d.uploadLimit), int(d.uploadLimit))
