@@ -320,7 +320,15 @@ jobs:
             if [ -z "$DMG_PATH" ]; then
               echo "✗ ERROR: DMG file not found!"
               echo "Searching in bundle directory:"
-              find src-tauri/target/release/bundle -type f 2>/dev/null || echo "No files found"
+              find src-tauri/target/release/bundle -type f 2>/dev/null || echo "No files found in bundle"
+              echo "Searching in entire target directory:"
+              find src-tauri/target -name "*.dmg" -type f 2>/dev/null || echo "No DMG files found in target"
+              echo "Listing target/release structure:"
+              ls -la src-tauri/target/release/ 2>/dev/null || echo "target/release not found"
+              echo "Listing target/release/bundle structure:"
+              ls -la src-tauri/target/release/bundle/ 2>/dev/null || echo "target/release/bundle not found"
+              echo "Last 100 lines of build log:"
+              tail -100 build.log 2>/dev/null || echo "No build log available"
               exit 1
             fi
             
