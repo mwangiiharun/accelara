@@ -98,20 +98,47 @@ export default function AboutModal({ onClose }) {
     try {
       // Simulate progress (actual progress would come from backend events)
       const progressInterval = setInterval(() => {
-        setDownloadProgress(prev => Math.min(prev + 5, 95));
+        setDownloadProgress(prev => Math.min(prev + 5, 90));
       }, 500);
       
+      // Download update
       const path = await window.electronAPI.downloadUpdate(asset.browser_download_url, asset.name);
       
       clearInterval(progressInterval);
-      setDownloadProgress(100);
-      setDownloadPath(path);
-      setIsDownloading(false);
+      setDownloadProgress(90);
       
-      alert(`Update downloaded successfully!\n\nLocation: ${path}\n\nPlease install it manually.`);
+      // Ask user if they want to install now
+      const shouldInstall = window.confirm(
+        `Update downloaded successfully!\n\nLocation: ${path}\n\n` +
+        `Would you like to install it now? The app will restart automatically.`
+      );
+      
+      if (shouldInstall) {
+        setDownloadProgress(95);
+        
+        // Install update
+        await window.electronAPI.installUpdate(path);
+        
+        setDownloadProgress(100);
+        
+        // Restart app
+        setTimeout(async () => {
+          try {
+            await window.electronAPI.restartApp();
+          } catch (error) {
+            console.error('Failed to restart app:', error);
+            alert(`Update installed successfully! Please restart the app manually.`);
+          }
+        }, 1000);
+      } else {
+        setDownloadProgress(100);
+        setDownloadPath(path);
+        setIsDownloading(false);
+        alert(`Update downloaded successfully!\n\nLocation: ${path}\n\nYou can install it later from the About menu.`);
+      }
     } catch (error) {
-      console.error('Failed to download update:', error);
-      alert(`Failed to download update: ${error.message || error}`);
+      console.error('Failed to download/install update:', error);
+      alert(`Failed to download/install update: ${error.message || error}`);
       setIsDownloading(false);
       setDownloadProgress(0);
     }

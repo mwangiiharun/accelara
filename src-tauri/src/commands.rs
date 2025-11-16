@@ -1694,3 +1694,71 @@ pub async fn download_update(asset_url: String, filename: String) -> Result<Stri
     logger::log_info("download_update", &format!("Download complete: {}", path.display()));
     Ok(path.to_string_lossy().to_string())
 }
+
+// Handler 28: install-update
+#[command]
+pub async fn install_update(file_path: String) -> Result<(), String> {
+    use crate::logger;
+    use std::path::PathBuf;
+    
+    let path = PathBuf::from(file_path);
+    logger::log_info("install_update", &format!("Installing update from: {}", path.display()));
+    
+    updater::install_update(&path).await?;
+    
+    logger::log_info("install_update", "Update installed successfully");
+    Ok(())
+}
+
+// Handler 29: restart-app
+#[command]
+pub async fn restart_app(app: tauri::AppHandle) -> Result<(), String> {
+    use crate::logger;
+    use std::process::Command;
+    use std::env;
+    
+    logger::log_info("restart_app", "Restarting application...");
+    
+    // Get the current executable path
+    let exe_path = env::current_exe()
+        .map_err(|e| format!("Failed to get current executable: {}", e))?;
+    
+    #[cfg(target_os = "macos")]
+    {
+        // On macOS, we need to open the app bundle
+        let app_bundle = exe_path
+            .parent()
+            .and_then(|p| p.parent())
+            .and_then(|p| p.parent())
+            .ok_or_else(|| "Could not determine app bundle path".to_string())?;
+        
+        // Use open command to launch the app
+        Command::new("open")
+            .arg("-a")
+            .arg(app_bundle)
+            .spawn()
+            .map_err(|e| format!("Failed to restart app: {}", e))?;
+    }
+    
+    #[cfg(target_os = "windows")]
+    {
+        // On Windows, just run the executable
+        Command::new(&exe_path)
+            .spawn()
+            .map_err(|e| format!("Failed to restart app: {}", e))?;
+    }
+    
+    #[cfg(target_os = "linux")]
+    {
+        // On Linux, run the AppImage
+        Command::new(&exe_path)
+            .spawn()
+            .map_err(|e| format!("Failed to restart app: {}", e))?;
+    }
+    
+    // Give it a moment to start, then exit
+    tokio::time::sleep(tokio::time::Duration::from_millis(500)).await;
+    app.exit(0);
+    
+    Ok(())
+}

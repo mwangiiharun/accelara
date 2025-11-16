@@ -156,6 +156,167 @@ fn compare_versions(v1: &str, v2: &str) -> Ordering {
     Ordering::Equal
 }
 
+/// Install update (platform-specific)
+#[cfg(target_os = "macos")]
+pub async fn install_update(file_path: &PathBuf) -> Result<(), String> {
+    use crate::logger;
+    use std::process::Command;
+    
+    logger::log_info("updater", &format!("Installing update from: {}", file_path.display()));
+    
+    // Mount the DMG
+    let mount_output = Command::new("hdiutil")
+        .arg("attach")
+        .arg("-nobrowse")
+        .arg("-quiet")
+        .arg(file_path)
+        .output()
+        .map_err(|e| format!("Failed to mount DMG: {}", e))?;
+    
+    if !mount_output.status.success() {
+        return Err("Failed to mount DMG".to_string());
+    }
+    
+    // Parse mount point from output
+    let mount_output_str = String::from_utf8_lossy(&mount_output.stdout);
+    let mount_point = mount_output_str
+        .lines()
+        .find(|line| line.contains("/Volumes/"))
+        .and_then(|line| line.split_whitespace().last())
+        .ok_or_else(|| "Could not find mount point".to_string())?;
+    
+    logger::log_info("updater", &format!("DMG mounted at: {}", mount_point));
+    
+    // Find the .app bundle in the mounted volume
+    let app_bundle = std::fs::read_dir(mount_point)
+        .map_err(|e| format!("Failed to read mount point: {}", e))?
+        .filter_map(|entry| entry.ok())
+        .find(|entry| {
+            entry.path().extension().and_then(|ext| ext.to_str()) == Some("app")
+        })
+        .ok_or_else(|| "Could not find .app bundle in DMG".to_string())?
+        .path();
+    
+    logger::log_info("updater", &format!("Found app bundle: {}", app_bundle.display()));
+    
+    // Get current app bundle path
+    let current_app = std::env::current_exe()
+        .map_err(|e| format!("Failed to get current executable: {}", e))?
+        .parent()
+        .and_then(|p| p.parent())
+        .and_then(|p| p.parent())
+        .ok_or_else(|| "Could not determine app bundle path".to_string())?;
+    
+    logger::log_info("updater", &format!("Current app bundle: {}", current_app.display()));
+    
+    // Copy new app bundle to Applications folder (we can't replace the running app directly)
+    let applications_dir = dirs::home_dir()
+        .ok_or_else(|| "Could not determine home directory".to_string())?
+        .join("Applications");
+    
+    let new_app_path = applications_dir.join(app_bundle.file_name().unwrap());
+    
+    logger::log_info("updater", &format!("Copying to: {}", new_app_path.display()));
+    
+    // Remove old version if it exists
+    if new_app_path.exists() {
+        std::fs::remove_dir_all(&new_app_path)
+            .map_err(|e| format!("Failed to remove old app: {}", e))?;
+    }
+    
+    // Copy new app bundle
+    Command::new("cp")
+        .arg("-R")
+        .arg(&app_bundle)
+        .arg(&new_app_path)
+        .output()
+        .map_err(|e| format!("Failed to copy app bundle: {}", e))?;
+    
+    logger::log_info("updater", "App bundle copied successfully");
+    
+    // Unmount DMG
+    Command::new("hdiutil")
+        .arg("detach")
+        .arg("-quiet")
+        .arg(mount_point)
+        .output()
+        .map_err(|e| format!("Failed to unmount DMG: {}", e))?;
+    
+    logger::log_info("updater", "DMG unmounted");
+    
+    Ok(())
+}
+
+#[cfg(target_os = "windows")]
+pub async fn install_update(file_path: &PathBuf) -> Result<(), String> {
+    use crate::logger;
+    use std::process::Command;
+    
+    logger::log_info("updater", &format!("Installing update from: {}", file_path.display()));
+    
+    // Run the installer silently
+    let status = Command::new(file_path)
+        .arg("/S") // Silent install
+        .status()
+        .map_err(|e| format!("Failed to run installer: {}", e))?;
+    
+    if !status.success() {
+        return Err("Installer failed".to_string());
+    }
+    
+    logger::log_info("updater", "Update installed successfully");
+    Ok(())
+}
+
+#[cfg(target_os = "linux")]
+pub async fn install_update(file_path: &PathBuf) -> Result<(), String> {
+    use crate::logger;
+    use std::fs;
+    use std::os::unix::fs::PermissionsExt;
+    
+    logger::log_info("updater", &format!("Installing update from: {}", file_path.display()));
+    
+    // Get the current AppImage path (usually in ~/.local/bin or similar)
+    let home = dirs::home_dir()
+        .ok_or_else(|| "Could not determine home directory".to_string())?;
+    
+    // Try common locations
+    let possible_locations = vec![
+        home.join(".local/bin/ACCELARA.AppImage"),
+        home.join("bin/ACCELARA.AppImage"),
+        std::path::PathBuf::from("/usr/local/bin/ACCELARA.AppImage"),
+    ];
+    
+    let target_path = possible_locations
+        .iter()
+        .find(|path| path.exists())
+        .ok_or_else(|| "Could not find existing AppImage to replace".to_string())?;
+    
+    logger::log_info("updater", &format!("Replacing: {}", target_path.display()));
+    
+    // Backup old version
+    let backup_path = target_path.with_extension("AppImage.bak");
+    if target_path.exists() {
+        fs::copy(&target_path, &backup_path)
+            .map_err(|e| format!("Failed to backup old AppImage: {}", e))?;
+    }
+    
+    // Copy new AppImage
+    fs::copy(file_path, &target_path)
+        .map_err(|e| format!("Failed to copy new AppImage: {}", e))?;
+    
+    // Make executable
+    let mut perms = fs::metadata(&target_path)
+        .map_err(|e| format!("Failed to get file metadata: {}", e))?
+        .permissions();
+    perms.set_mode(0o755);
+    fs::set_permissions(&target_path, perms)
+        .map_err(|e| format!("Failed to set permissions: {}", e))?;
+    
+    logger::log_info("updater", "AppImage replaced successfully");
+    Ok(())
+}
+
 /// Download update file to a temporary location
 pub async fn download_update(asset_url: &str, filename: &str) -> Result<PathBuf, String> {
     use crate::logger;

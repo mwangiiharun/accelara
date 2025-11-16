@@ -53,6 +53,8 @@ pub fn run() {
             commands::open_debug_log_window,
             commands::check_for_updates,
             commands::download_update,
+            commands::install_update,
+            commands::restart_app,
         ])
         .setup(|app| {
             // Initialize logger
