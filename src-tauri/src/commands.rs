@@ -1716,26 +1716,41 @@ pub async fn restart_app(app: tauri::AppHandle) -> Result<(), String> {
     use crate::logger;
     use std::process::Command;
     use std::env;
+    use dirs::home_dir;
     
     logger::log_info("restart_app", "Restarting application...");
     
-    // Get the current executable path
-    let exe_path = env::current_exe()
-        .map_err(|e| format!("Failed to get current executable: {}", e))?;
-    
     #[cfg(target_os = "macos")]
     {
-        // On macOS, we need to open the app bundle
-        let app_bundle = exe_path
-            .parent()
-            .and_then(|p| p.parent())
-            .and_then(|p| p.parent())
-            .ok_or_else(|| "Could not determine app bundle path".to_string())?;
+        // On macOS, try to launch from Applications first (where updates are installed)
+        // If not found, fall back to current app bundle
+        let applications_dir = home_dir()
+            .ok_or_else(|| "Could not determine home directory".to_string())?
+            .join("Applications");
+        
+        let app_name = "ACCELARA.app";
+        let applications_app = applications_dir.join(app_name);
+        
+        let app_bundle = if applications_app.exists() {
+            logger::log_info("restart_app", &format!("Launching from Applications: {}", applications_app.display()));
+            applications_app
+        } else {
+            // Fall back to current app bundle
+            let exe_path = env::current_exe()
+                .map_err(|e| format!("Failed to get current executable: {}", e))?;
+            let current_bundle = exe_path
+                .parent()
+                .and_then(|p| p.parent())
+                .and_then(|p| p.parent())
+                .ok_or_else(|| "Could not determine app bundle path".to_string())?;
+            logger::log_info("restart_app", &format!("Launching current app bundle: {}", current_bundle.display()));
+            current_bundle.to_path_buf()
+        };
         
         // Use open command to launch the app
         Command::new("open")
             .arg("-a")
-            .arg(app_bundle)
+            .arg(&app_bundle)
             .spawn()
             .map_err(|e| format!("Failed to restart app: {}", e))?;
     }
@@ -1743,6 +1758,8 @@ pub async fn restart_app(app: tauri::AppHandle) -> Result<(), String> {
     #[cfg(target_os = "windows")]
     {
         // On Windows, just run the executable
+        let exe_path = env::current_exe()
+            .map_err(|e| format!("Failed to get current executable: {}", e))?;
         Command::new(&exe_path)
             .spawn()
             .map_err(|e| format!("Failed to restart app: {}", e))?;
@@ -1750,8 +1767,22 @@ pub async fn restart_app(app: tauri::AppHandle) -> Result<(), String> {
     
     #[cfg(target_os = "linux")]
     {
-        // On Linux, run the AppImage
-        Command::new(&exe_path)
+        // On Linux, try to find the AppImage in common locations
+        let home = home_dir()
+            .ok_or_else(|| "Could not determine home directory".to_string())?;
+        
+        let possible_locations = vec![
+            home.join(".local/bin/ACCELARA.AppImage"),
+            home.join("bin/ACCELARA.AppImage"),
+            std::path::PathBuf::from("/usr/local/bin/ACCELARA.AppImage"),
+        ];
+        
+        let app_image = possible_locations
+            .iter()
+            .find(|path| path.exists())
+            .ok_or_else(|| "Could not find AppImage to launch".to_string())?;
+        
+        Command::new(app_image)
             .spawn()
             .map_err(|e| format!("Failed to restart app: {}", e))?;
     }
