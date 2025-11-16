@@ -1,13 +1,19 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
+	"net"
 	"net/http"
 	"os"
+	"path/filepath"
 	"strings"
+	"time"
 
+	"github.com/anacrolix/torrent"
 	"github.com/anacrolix/torrent/metainfo"
+	"github.com/anacrolix/torrent/storage"
 )
 
 func inspectTorrent() {
@@ -31,8 +37,15 @@ func inspectTorrent() {
 
 	// Load torrent from different sources
 	if strings.HasPrefix(source, "magnet:") {
-		fmt.Fprintf(os.Stderr, "Error: magnet links require metadata download, use inspect-torrent after adding to client\n")
-		os.Exit(1)
+		// For magnet links, we need to download metadata first
+		result, err := inspectMagnetLink(source)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Error: failed to inspect magnet link: %s\n", err)
+			os.Exit(1)
+		}
+		data, _ := json.Marshal(result)
+		fmt.Println(string(data))
+		return
 	} else if strings.HasPrefix(source, "http://") || strings.HasPrefix(source, "https://") {
 		resp, err := http.Get(source)
 		if err != nil {
@@ -99,5 +112,104 @@ func inspectTorrent() {
 
 	data, _ := json.Marshal(result)
 	fmt.Println(string(data))
+}
+
+// inspectMagnetLink downloads metadata from a magnet link and returns torrent info
+func inspectMagnetLink(magnetURL string) (map[string]interface{}, error) {
+	// Create a temporary directory for inspection
+	tempDir := filepath.Join(os.TempDir(), "accelara-inspect-"+fmt.Sprintf("%d", time.Now().UnixNano()))
+	defer func() {
+		// Clean up temp directory
+		os.RemoveAll(tempDir)
+	}()
+	
+	// Create a temporary torrent client
+	cfg := torrent.NewDefaultClientConfig()
+	cfg.DataDir = tempDir
+	cfg.DefaultStorage = storage.NewMMap(cfg.DataDir)
+	
+	// Try to find an available port
+	listenPort := 42069
+	for i := 0; i < 5; i++ {
+		addr, err := net.ResolveTCPAddr("tcp", fmt.Sprintf(":%d", listenPort+i))
+		if err != nil {
+			continue
+		}
+		listener, err := net.ListenTCP("tcp", addr)
+		if err == nil {
+			listener.Close()
+			cfg.ListenPort = listenPort + i
+			break
+		}
+	}
+	
+	client, err := torrent.NewClient(cfg)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create torrent client: %w", err)
+	}
+	defer client.Close()
+	
+	// Add magnet link
+	t, err := client.AddMagnet(magnetURL)
+	if err != nil {
+		return nil, fmt.Errorf("failed to add magnet link: %w", err)
+	}
+	
+	// Wait for metadata with timeout
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	
+	metadataChan := make(chan bool, 1)
+	go func() {
+		<-t.GotInfo()
+		metadataChan <- true
+	}()
+	
+	select {
+	case <-metadataChan:
+		// Metadata received
+	case <-ctx.Done():
+		return nil, fmt.Errorf("timeout waiting for metadata (30 seconds)")
+	}
+	
+	// Get torrent info
+	info := t.Info()
+	if info == nil {
+		return nil, fmt.Errorf("failed to get torrent info")
+	}
+	
+	// Build file list
+	files := []map[string]interface{}{}
+	totalSize := int64(0)
+	
+	if info.IsDir() {
+		for _, file := range info.Files {
+			filePath := strings.Join(file.Path, "/")
+			fileSize := file.Length
+			totalSize += fileSize
+			files = append(files, map[string]interface{}{
+				"path": filePath,
+				"size": fileSize,
+			})
+		}
+	} else {
+		// Single file torrent
+		fileName := info.Name
+		fileSize := info.Length
+		totalSize = fileSize
+		files = append(files, map[string]interface{}{
+			"path": fileName,
+			"size": fileSize,
+		})
+	}
+	
+	result := map[string]interface{}{
+		"name":      info.Name,
+		"totalSize": totalSize,
+		"fileCount": len(files),
+		"files":     files,
+	}
+	
+	return result, nil
 }
 

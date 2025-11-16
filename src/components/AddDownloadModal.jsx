@@ -31,7 +31,7 @@ export default function AddDownloadModal({ onClose, initialSource = '' }) {
 
   // Inspect source when it changes
   useEffect(() => {
-    if (!source || !window.electronAPI) return;
+    if (!source || !globalThis.electronAPI) return;
 
     const inspectSource = async () => {
       setInspecting(true);
@@ -41,26 +41,51 @@ export default function AddDownloadModal({ onClose, initialSource = '' }) {
 
       try {
         // Check if it's a torrent
+        // Check for magnet links, .torrent extension (case-insensitive), or file paths
+        const lowerSource = source.toLowerCase();
         const isTorrent = source.startsWith('magnet:') || 
                          source.endsWith('.torrent') || 
+                         lowerSource.endsWith('.torrent') ||
                          (source.includes('.torrent') && !source.includes('?'));
 
         if (isTorrent) {
+          console.log('Detected torrent source, inspecting:', source);
+          // Try to inspect both magnet links and torrent files
           if (source.startsWith('magnet:')) {
-            // For magnet links, we can't inspect without downloading metadata
-            setInspectError('Magnet links require metadata download. Details will be shown after starting.');
+            // For magnet links, show loading message immediately
+            setInspectError('Fetching metadata from magnet link... This may take 10-30 seconds.');
           } else {
-            const info = await window.electronAPI.inspectTorrent(source);
+            // For torrent files, show loading message
+            setInspectError('Reading torrent file...');
+          }
+          
+          try {
+            console.log('Calling inspectTorrent with source:', source);
+            const info = await globalThis.electronAPI.inspectTorrent(source);
+            console.log('Torrent inspection result:', info);
             setTorrentInfo(info);
+            setInspectError(null);
             // Auto-set output filename if not set
             if (!output && info.name) {
               const defaultPath = settings.defaultDownloadPath || require('os').homedir() + '/Downloads';
               setOutput(defaultPath);
             }
+          } catch (error) {
+            console.error('Torrent inspection error:', error);
+            if (source.startsWith('magnet:')) {
+              // For magnet links, provide helpful error message
+              if (error.message && error.message.includes('timeout')) {
+                setInspectError('Metadata fetch timed out. The torrent may have no active seeders, or your connection is slow. You can still start the download.');
+              } else {
+                setInspectError(`Failed to fetch metadata: ${error.message || error}. You can still start the download to see details.`);
+              }
+            } else {
+              setInspectError(`Failed to inspect torrent file: ${error.message || error}`);
+            }
           }
         } else if (source.startsWith('http://') || source.startsWith('https://')) {
           // Get HTTP file info
-          const info = await window.electronAPI.getHTTPInfo(source);
+          const info = await globalThis.electronAPI.getHTTPInfo(source);
           setHttpInfo(info);
           // Auto-set output filename if not set
           if (!output && info.fileName) {
@@ -82,11 +107,14 @@ export default function AddDownloadModal({ onClose, initialSource = '' }) {
   }, [source, settings.defaultDownloadPath]);
 
   const handleSelectTorrent = async () => {
-    if (window.electronAPI) {
+    if (globalThis.electronAPI) {
       try {
-        const filePath = await window.electronAPI.selectTorrentFile();
+        const filePath = await globalThis.electronAPI.selectTorrentFile();
         if (filePath) {
+          console.log('Selected torrent file:', filePath);
           setSource(filePath);
+          // Force inspection by setting inspecting state
+          setInspecting(true);
         }
       } catch (error) {
         console.error('Failed to select torrent file:', error);
@@ -95,9 +123,9 @@ export default function AddDownloadModal({ onClose, initialSource = '' }) {
   };
 
   const handleSelectFolder = async () => {
-    if (window.electronAPI) {
+    if (globalThis.electronAPI) {
       try {
-        const folderPath = await window.electronAPI.selectDownloadFolder();
+        const folderPath = await globalThis.electronAPI.selectDownloadFolder();
         if (folderPath) {
           setOutput(folderPath);
         }

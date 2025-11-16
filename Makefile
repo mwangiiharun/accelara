@@ -16,6 +16,8 @@ build-api:
 	@go build -ldflags="-s -w" -trimpath -o bin/api-wrapper ./cmd/api-wrapper
 	@echo "Stripping binary..."
 	@strip bin/api-wrapper 2>/dev/null || echo "strip not available, skipping"
+	@echo "Downloading Iris..."
+	@bash scripts/download-iris.sh || echo "Warning: Failed to download Iris"
 
 # Build for all platforms
 build-all:

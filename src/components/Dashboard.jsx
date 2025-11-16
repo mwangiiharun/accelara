@@ -4,17 +4,25 @@ import ActiveDownloadsList from './ActiveDownloadsList';
 import SpeedChart from './SpeedChart';
 import StatsPanel from './StatsPanel';
 import SpeedTest from './SpeedTest';
-import { Zap, Download, Globe, Magnet, Activity } from 'lucide-react';
+import { Zap, Download, Globe, Magnet, Activity, ChevronDown, ChevronUp } from 'lucide-react';
 
 export default function Dashboard({ onAddDownload }) {
-  const { downloads, stats } = useDownloads();
+  const { downloads, stats, highlightedDownloadId } = useDownloads();
   const [activeTab, setActiveTab] = useState('all'); // 'all', 'http', 'torrent', 'speedtest'
+  const [chartsExpanded, setChartsExpanded] = useState(true);
   
   const httpDownloads = downloads.filter(d => d.type === 'http');
   const torrentDownloads = downloads.filter(d => d.type === 'torrent' || d.type === 'magnet');
   const displayedDownloads = activeTab === 'http' ? httpDownloads : 
                              activeTab === 'torrent' ? torrentDownloads : 
                              downloads;
+  
+  // Get highlighted download
+  const highlightedDownload = highlightedDownloadId 
+    ? downloads.find(d => d.id === highlightedDownloadId)
+    : displayedDownloads.length > 0 
+      ? displayedDownloads[0] 
+      : null;
 
   return (
     <div className="flex flex-col h-full relative">
@@ -101,39 +109,113 @@ export default function Dashboard({ onAddDownload }) {
           </div>
         </div>
 
-        {/* Charts - Separated by type */}
-        {activeTab === 'http' && httpDownloads.length > 0 && (
-          <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-            <SpeedChart title="HTTP Download Speed" data={stats.httpStats.downloadRate} color="#0ea5e9" />
+        {/* Charts - Show data for highlighted download */}
+        {highlightedDownload && (
+          <div className="mt-6">
+            <button
+              onClick={() => setChartsExpanded(!chartsExpanded)}
+              className="flex items-center gap-2 text-lg font-semibold theme-text-primary hover:theme-text-secondary transition-colors mb-4"
+            >
+              {chartsExpanded ? <ChevronUp className="w-5 h-5" /> : <ChevronDown className="w-5 h-5" />}
+              <span>Charts - {highlightedDownload.torrent_name || highlightedDownload.source.split('/').pop() || 'Download'}</span>
+            </button>
+            
+            {chartsExpanded && (
+              <>
+                {highlightedDownload.type === 'http' && (
+                  <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+                    <SpeedChart 
+                      title={`Download Speed - ${highlightedDownload.torrent_name || highlightedDownload.source.split('/').pop() || 'Download'}`}
+                      data={highlightedDownload.speedHistory || []} 
+                      color="#0ea5e9" 
+                    />
+                  </div>
+                )}
+                
+                {(highlightedDownload.type === 'torrent' || highlightedDownload.type === 'magnet') && (
+                  <>
+                    <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+                      <SpeedChart 
+                        title={`Download Speed - ${highlightedDownload.torrent_name || 'Torrent'}`}
+                        data={highlightedDownload.speedHistory || []} 
+                        color="#0ea5e9" 
+                      />
+                      <SpeedChart 
+                        title={`Upload Speed - ${highlightedDownload.torrent_name || 'Torrent'}`}
+                        data={highlightedDownload.uploadHistory || []} 
+                        color="#10b981" 
+                      />
+                    </div>
+                    <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 mt-6">
+                      <SpeedChart 
+                        title={`Peers - ${highlightedDownload.torrent_name || 'Torrent'}`}
+                        data={highlightedDownload.peersHistory || []} 
+                        color="#f59e0b" 
+                        format="number" 
+                      />
+                      <SpeedChart 
+                        title={`Seeds - ${highlightedDownload.torrent_name || 'Torrent'}`}
+                        data={highlightedDownload.seedsHistory || []} 
+                        color="#8b5cf6" 
+                        format="number" 
+                      />
+                    </div>
+                  </>
+                )}
+              </>
+            )}
           </div>
         )}
         
-        {activeTab === 'torrent' && torrentDownloads.length > 0 && (
-          <>
-            <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-              <SpeedChart title="Torrent Download Speed" data={stats.torrentStats.downloadRate} color="#0ea5e9" />
-              <SpeedChart title="Torrent Upload Speed" data={stats.torrentStats.uploadRate} color="#10b981" />
-            </div>
-            <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 mt-6">
-              <SpeedChart title="Peers" data={stats.torrentStats.peers} color="#f59e0b" format="number" />
-              <SpeedChart title="Seeds" data={stats.torrentStats.seeds} color="#8b5cf6" format="number" />
-            </div>
-          </>
-        )}
-        
-        {activeTab === 'all' && downloads.length > 0 && (
-          <>
-            <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-              <SpeedChart title="Download Speed (All)" data={stats.downloadRate} color="#0ea5e9" />
-              <SpeedChart title="Upload Speed (All)" data={stats.uploadRate} color="#10b981" />
-            </div>
-            {(torrentDownloads.length > 0) && (
-              <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 mt-6">
-                <SpeedChart title="Peers" data={stats.peers} color="#f59e0b" format="number" />
-                <SpeedChart title="Seeds" data={stats.seeds} color="#8b5cf6" format="number" />
-              </div>
+        {/* Fallback: Show aggregate charts if no highlighted download */}
+        {!highlightedDownload && (
+          <div className="mt-6">
+            <button
+              onClick={() => setChartsExpanded(!chartsExpanded)}
+              className="flex items-center gap-2 text-lg font-semibold theme-text-primary hover:theme-text-secondary transition-colors mb-4"
+            >
+              {chartsExpanded ? <ChevronUp className="w-5 h-5" /> : <ChevronDown className="w-5 h-5" />}
+              <span>Aggregate Charts</span>
+            </button>
+            
+            {chartsExpanded && (
+              <>
+                {activeTab === 'http' && httpDownloads.length > 0 && (
+                  <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+                    <SpeedChart title="HTTP Download Speed (All)" data={stats.httpStats.downloadRate} color="#0ea5e9" />
+                  </div>
+                )}
+                
+                {activeTab === 'torrent' && torrentDownloads.length > 0 && (
+                  <>
+                    <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+                      <SpeedChart title="Torrent Download Speed (All)" data={stats.torrentStats.downloadRate} color="#0ea5e9" />
+                      <SpeedChart title="Torrent Upload Speed (All)" data={stats.torrentStats.uploadRate} color="#10b981" />
+                    </div>
+                    <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 mt-6">
+                      <SpeedChart title="Peers (All)" data={stats.torrentStats.peers} color="#f59e0b" format="number" />
+                      <SpeedChart title="Seeds (All)" data={stats.torrentStats.seeds} color="#8b5cf6" format="number" />
+                    </div>
+                  </>
+                )}
+                
+                {activeTab === 'all' && downloads.length > 0 && (
+                  <>
+                    <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+                      <SpeedChart title="Download Speed (All)" data={stats.downloadRate} color="#0ea5e9" />
+                      <SpeedChart title="Upload Speed (All)" data={stats.uploadRate} color="#10b981" />
+                    </div>
+                    {(torrentDownloads.length > 0) && (
+                      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 mt-6">
+                        <SpeedChart title="Peers (All)" data={stats.peers} color="#f59e0b" format="number" />
+                        <SpeedChart title="Seeds (All)" data={stats.seeds} color="#8b5cf6" format="number" />
+                      </div>
+                    )}
+                  </>
+                )}
+              </>
             )}
-          </>
+          </div>
         )}
           </>
         )}

@@ -1,6 +1,6 @@
 import { useEffect, useRef } from 'react';
 
-export default function Speedometer({ value, maxValue = 100, unit = 'Mbps', label, color = '#0ea5e9' }) {
+export default function Speedometer({ value, maxValue = 100, unit = 'Mbps', label, color = '#0ea5e9', isRunning = false }) {
   const canvasRef = useRef(null);
 
   useEffect(() => {
@@ -51,32 +51,60 @@ export default function Speedometer({ value, maxValue = 100, unit = 'Mbps', labe
       ctx.stroke();
     }
 
-    // Draw value text
+    // Draw value text - perfectly centered horizontally and vertically
     ctx.fillStyle = getComputedStyle(document.documentElement).getPropertyValue('--text-primary').trim() || '#f1f5f9';
     ctx.font = 'bold 32px system-ui';
     ctx.textAlign = 'center';
     ctx.textBaseline = 'middle';
-    ctx.fillText(value.toFixed(1), centerX, centerY - 30);
+    // Position value text in the center of the gauge arc (slightly above center to account for unit below)
+    const valueTextY = centerY - 12;
+    ctx.fillText(value.toFixed(1), centerX, valueTextY);
 
-    // Draw unit text
+    // Draw unit text - perfectly centered below value
     ctx.font = '16px system-ui';
     ctx.fillStyle = getComputedStyle(document.documentElement).getPropertyValue('--text-secondary').trim() || '#cbd5e1';
-    ctx.fillText(unit, centerX, centerY - 5);
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    // Position unit text directly below value text
+    const unitTextY = centerY + 12;
+    ctx.fillText(unit, centerX, unitTextY);
 
     // Draw label (Bytes per second) - positioned below the canvas to avoid touching widget
     // Label will be rendered outside the canvas in the component
-  }, [value, maxValue, unit, label, color]);
+  }, [value, maxValue, unit, label, color, isRunning]);
+
+  // Determine if we should animate - only when test is running and value is 0
+  const shouldAnimate = isRunning && (value === 0 || value < 0.1);
 
   return (
     <div className="flex flex-col items-center">
-      <canvas
-        ref={canvasRef}
-        width={200}
-        height={140}
-        className="block"
-      />
+      <div className={`relative ${shouldAnimate ? 'animate-pulse' : ''}`}>
+        <canvas
+          ref={canvasRef}
+          width={200}
+          height={140}
+          className={`block transition-all duration-500 ${shouldAnimate ? 'opacity-60' : 'opacity-100'}`}
+          style={{
+            transform: shouldAnimate ? 'scale(0.98)' : 'scale(1)',
+            transition: 'opacity 0.5s ease, transform 0.5s ease',
+          }}
+        />
+        {shouldAnimate && (
+          <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
+            <div 
+              className="w-20 h-20 rounded-full animate-spin" 
+              style={{ 
+                border: `4px solid ${color}20`,
+                borderTopColor: color,
+                borderRightColor: color,
+                opacity: 0.5,
+              }} 
+            />
+          </div>
+        )}
+      </div>
       {label && (
-        <p className="text-xs theme-text-tertiary mt-2 text-center">
+        <p className={`text-xs theme-text-tertiary mt-2 text-center transition-all ${shouldAnimate ? 'animate-pulse' : ''}`}>
           {label}
         </p>
       )}

@@ -1,0 +1,66 @@
+{
+  "$schema": "../node_modules/@tauri-apps/cli/config.schema.json",
+  "productName": "ACCELARA",
+  "version": "3.0.0",
+  "identifier": "com.mwangiiharun.accelara",
+  "build": {
+    "frontendDist": "../dist",
+    "devUrl": "http://localhost:5174",
+    "beforeDevCommand": "make build-api && npm run dev:react",
+    "beforeBuildCommand": "make build-api && npm run build:react"
+  },
+  "app": {
+    "windows": [
+      {
+        "label": "main",
+        "title": "ACCELARA",
+        "width": 1400,
+        "height": 900,
+        "minWidth": 1200,
+        "minHeight": 700,
+        "resizable": true,
+        "fullscreen": false,
+        "backgroundColor": "#0f172a"
+      },
+      {
+        "label": "debug-logs",
+        "title": "ACCELARA Debug Logs",
+        "width": 1000,
+        "height": 700,
+        "minWidth": 800,
+        "minHeight": 500,
+        "resizable": true,
+        "fullscreen": false,
+        "visible": false,
+        "url": "debug-logs.html",
+        "backgroundColor": "#0f172a"
+      }
+    ],
+    "security": {
+      "csp": null
+    },
+    "macOSPrivateApi": true
+  },
+  "bundle": {
+    "active": true,
+    "targets": ["dmg"],
+    "icon": [
+      "icons/32x32.png",
+      "icons/128x128.png",
+      "icons/128x128@2x.png",
+      "icons/icon.icns",
+      "icons/icon.ico"
+    ],
+    "macOS": {
+      "frameworks": [],
+      "minimumSystemVersion": "10.13",
+      "exceptionDomain": "",
+      "signingIdentity": null,
+      "entitlements": null
+    },
+    "resources": [
+      "../bin"
+    ]
+  },
+  "plugins": {}
+}

@@ -171,10 +171,17 @@ func main() {
 			os.Exit(0)
 		}
 	} else {
+		// HTTP downloads are ALWAYS files (never directories)
+		// Only use download.tmp if the path explicitly exists as a directory
 		outFile := absOutPath
-		if info, err := os.Stat(absOutPath); err == nil && info.IsDir() {
-			outFile = filepath.Join(absOutPath, "download.tmp")
+		if info, err := os.Stat(absOutPath); err == nil {
+			// Path exists - only use download.tmp if it's actually a directory
+			if info.IsDir() {
+				outFile = filepath.Join(absOutPath, "download.tmp")
+			}
+			// If it exists and is a file, use it as-is
 		}
+		// If path doesn't exist, always treat it as a file path (HTTP downloads are files)
 
 		opts.DownloadID = *downloadID
 		dl := downloader.NewHTTPDownloader(*source, outFile, opts)
@@ -187,20 +194,31 @@ func main() {
 		select {
 		case err := <-errChan:
 			if err != nil {
+				// Report error with full details before exiting
 				reporter.Report(map[string]interface{}{
-					"type":    "error",
+					"type":    "http",
 					"status":  "error",
 					"message": err.Error(),
+					"error":   err.Error(),
 				})
+				// Also write to stderr for visibility in dev mode
+				fmt.Fprintf(os.Stderr, "HTTP download error: %v\n", err)
 				os.Exit(1)
 			}
+			// Success - report completion
+			reporter.Report(map[string]interface{}{
+				"type":    "http",
+				"status":  "completed",
+				"message": "Download completed successfully",
+			})
 		case <-ctx.Done():
 			// Context cancelled - shutdown signal received
 			reporter.Report(map[string]interface{}{
-				"type":    "info",
+				"type":    "http",
 				"status":  "stopped",
 				"message": "Download stopped by user.",
 			})
+			fmt.Fprintf(os.Stderr, "Download stopped by user\n")
 			os.Exit(0)
 		}
 	}

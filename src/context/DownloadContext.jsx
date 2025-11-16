@@ -5,6 +5,7 @@ const DownloadContext = createContext();
 export function DownloadProvider({ children }) {
   const [downloads, setDownloads] = useState([]);
   const [history, setHistory] = useState([]);
+  const [highlightedDownloadId, setHighlightedDownloadId] = useState(null);
   const [stats, setStats] = useState({
     downloadRate: [],
     uploadRate: [],
@@ -38,6 +39,21 @@ export function DownloadProvider({ children }) {
             return acc;
           }, []);
           setDownloads(uniqueDownloads);
+          
+          // Set default highlighted download to the earliest one (only on initial load)
+          setHighlightedDownloadId((current) => {
+            if (current) return current; // Don't override if already set
+            if (uniqueDownloads.length > 0) {
+              // Sort by started_at if available, otherwise use array order
+              const sorted = [...uniqueDownloads].sort((a, b) => {
+                const aTime = a.started_at || a.id || 0;
+                const bTime = b.started_at || b.id || 0;
+                return aTime - bTime;
+              });
+              return sorted[0].id;
+            }
+            return current;
+          });
         })
         .catch((error) => {
           console.error('Failed to load active downloads:', error);
@@ -63,18 +79,126 @@ export function DownloadProvider({ children }) {
           const existing = prev.find((d) => d.id === downloadId);
           if (existing) {
             // If download is paused, don't allow status updates to change it to downloading
-            if (existing.status === 'paused' && data.status && data.status !== 'paused') {
+            // Exception: if auto_paused flag is set, we still want to respect manual resume
+            const isAutoPaused = existing.auto_paused === true;
+            if (existing.status === 'paused' && data.status && data.status !== 'paused' && !isAutoPaused) {
               // Ignore status updates that would change paused to another status
+              // (unless it was auto-paused, in which case user can manually resume)
               return prev;
+            }
+            
+            // If this is a restored progress update, ALWAYS use the restored values
+            // This ensures we restore the correct progress even if frontend state is wrong
+            if (data.restored) {
+              // Use restored values directly - don't merge with existing
+              // The restored values come from the database and are authoritative
+              console.log(`[DownloadContext] Restoring progress for ${downloadId}: ${data.downloaded} bytes (${((data.progress || 0) * 100).toFixed(2)}%)`);
+              // Keep the restored values as-is - they're already in data
+              // Continue to update the download with restored values
+            } else {
+              // Prevent progress from going backwards (e.g., from 600MB to 0MB on resume)
+              // Only allow progress to decrease if it's explicitly a reset (e.g., new download)
+              if (data.progress !== undefined && data.downloaded !== undefined && 
+                  existing.downloaded > 0 && data.downloaded < existing.downloaded && 
+                  data.downloaded === 0 && existing.downloaded > 1000) {
+                // Progress went backwards significantly (e.g., from 600MB to 0MB)
+                // This likely means the Go binary hasn't checked for existing files yet
+                // Keep the existing progress and wait for the next update
+                console.log(`[DownloadContext] Ignoring progress reset for ${downloadId}: ${existing.downloaded} -> ${data.downloaded}`);
+                return prev;
+              }
+            }
+            
+            // Check if download is progressing successfully - clear errors if so
+            const isProgressing = (data.status === 'downloading' || data.status === 'seeding') && 
+                                   ((data.speed || data.download_rate || 0) > 0 || 
+                                    (data.progress !== undefined && data.progress > (existing.progress || 0)));
+            
+            // Clear error/message if download is progressing successfully
+            let clearedError = existing.error;
+            let clearedMessage = existing.message;
+            let clearedMessages = existing.messages || [];
+            
+            if (isProgressing && existing.error) {
+              // Download is progressing - clear previous errors
+              clearedError = null;
+            }
+            
+            if (isProgressing && existing.message && 
+                (existing.message.includes('announce failed') || 
+                 existing.message.includes('write error') ||
+                 existing.message.includes('no route to host') ||
+                 existing.message.includes('timeout'))) {
+              // Clear transient error messages when download progresses
+              clearedMessage = null;
+              // Remove transient error messages from history
+              clearedMessages = clearedMessages.filter(msg => 
+                !(msg.text && (
+                  msg.text.includes('announce failed') ||
+                  msg.text.includes('write error') ||
+                  msg.text.includes('no route to host') ||
+                  msg.text.includes('timeout')
+                ))
+              );
+            }
+            
+            // Add new message if provided
+            if (data.message) {
+              clearedMessages = [...clearedMessages.slice(-9), { 
+                time: Date.now(), 
+                type: data.status === 'error' ? 'error' : (data.status === 'info' ? 'info' : 'message'),
+                text: data.message 
+              }];
+            }
+            
+            // Track speed history for all download types
+            let speedHistory = existing.speedHistory || [];
+            if (data.speed || data.download_rate) {
+              speedHistory = [...speedHistory.slice(-59), { time: Date.now(), value: data.speed || data.download_rate || 0 }];
+            }
+            
+            // Track upload history for torrent downloads
+            let uploadHistory = existing.uploadHistory || [];
+            if ((existing.type === 'torrent' || existing.type === 'magnet') && data.upload_rate !== undefined) {
+              uploadHistory = [...uploadHistory.slice(-59), { time: Date.now(), value: data.upload_rate || 0 }];
+            }
+            
+            // Track peers history for torrent downloads
+            let peersHistory = existing.peersHistory || [];
+            if ((existing.type === 'torrent' || existing.type === 'magnet') && data.peers !== undefined) {
+              peersHistory = [...peersHistory.slice(-59), { time: Date.now(), value: data.peers || 0 }];
+            }
+            
+            // Track seeds history for torrent downloads
+            let seedsHistory = existing.seedsHistory || [];
+            if ((existing.type === 'torrent' || existing.type === 'magnet') && data.seeds !== undefined) {
+              seedsHistory = [...seedsHistory.slice(-59), { time: Date.now(), value: data.seeds || 0 }];
+            }
+            
+            // If this is restored progress, ensure we preserve it even if data has 0 values
+            let finalData = { ...data };
+            if (data.restored) {
+              // Restored progress is authoritative - use it directly
+              finalData.downloaded = data.downloaded || existing.downloaded || 0;
+              finalData.progress = data.progress !== undefined ? data.progress : existing.progress || 0;
+              finalData.total = data.total || existing.total || 0;
+              // Mark as restored so we know not to accept 0 updates later
+              finalData._hasRestoredProgress = true;
+            } else if (existing._hasRestoredProgress && data.downloaded === 0 && existing.downloaded > 0) {
+              // This download has restored progress, don't allow 0 to overwrite it
+              console.log(`[DownloadContext] Preserving restored progress for ${downloadId}: ignoring 0 update`);
+              finalData.downloaded = existing.downloaded;
+              finalData.progress = existing.progress;
+              finalData.total = existing.total;
             }
             
             const updated = { 
               ...existing, 
-              ...data,
-              // Track speed history per download for HTTP downloads
-              speedHistory: existing.type === 'http' && (data.speed || data.download_rate) 
-                ? [...(existing.speedHistory || []).slice(-59), { time: Date.now(), value: data.speed || data.download_rate || 0 }]
-                : existing.speedHistory || [],
+              ...finalData,
+              speedHistory,
+              uploadHistory,
+              peersHistory,
+              seedsHistory,
               // Store chunk progress for HTTP downloads
               chunk_progress: data.chunk_progress || existing.chunk_progress || [],
               // Store merging progress
@@ -94,6 +218,10 @@ export function DownloadProvider({ children }) {
               torrent_name: data.torrent_name || existing.torrent_name,
               // Store file progress for torrents
               file_progress: data.file_progress || existing.file_progress || [],
+              // Store error and info messages (cleared if download is progressing)
+              error: data.error || clearedError,
+              message: data.message || clearedMessage,
+              messages: clearedMessages,
             };
             
             // Update global stats (aggregate all downloads) - always update for real-time display
@@ -153,13 +281,21 @@ export function DownloadProvider({ children }) {
                 speed: data.speed || data.download_rate || 0,
                 eta: data.eta || 0,
                 speedHistory: data.speedHistory || [],
+                uploadHistory: data.uploadHistory || [],
+                peersHistory: data.peersHistory || [],
+                seedsHistory: data.seedsHistory || [],
                 peers: data.peers || 0,
                 seeds: data.seeds || 0,
                 ...data,
               };
               // Check if it's already in the list (by ID) to prevent duplicates
               if (!prev.find((d) => d.id === downloadId)) {
-                return [...prev, newDownload];
+                const updated = [...prev, newDownload];
+                // Set as highlighted if it's the first download or no download is highlighted
+                if (updated.length === 1 || !highlightedDownloadId) {
+                  setHighlightedDownloadId(downloadId);
+                }
+                return updated;
               }
             }
           }
@@ -182,6 +318,23 @@ export function DownloadProvider({ children }) {
             
             // Remove from active downloads immediately
             const filtered = prev.filter((d) => d.id !== downloadId);
+            
+            // If the highlighted download was removed, select the earliest remaining one
+            setHighlightedDownloadId((current) => {
+              if (current === downloadId) {
+                // Find the earliest remaining download
+                if (filtered.length > 0) {
+                  const sorted = [...filtered].sort((a, b) => {
+                    const aTime = a.started_at || a.id || 0;
+                    const bTime = b.started_at || b.id || 0;
+                    return aTime - bTime;
+                  });
+                  return sorted[0].id;
+                }
+                return null;
+              }
+              return current;
+            });
             
             // Reload history from database (don't manually add to state to avoid duplicates)
             if (window.electronAPI) {
@@ -297,7 +450,27 @@ export function DownloadProvider({ children }) {
   const removeDownload = useCallback(async (downloadId) => {
     if (window.electronAPI) {
       await window.electronAPI.removeDownload(downloadId);
-      setDownloads((prev) => prev.filter((d) => d.id !== downloadId));
+      setDownloads((prev) => {
+        const filtered = prev.filter((d) => d.id !== downloadId);
+        
+        // If the highlighted download was removed, select the earliest remaining one
+        setHighlightedDownloadId((current) => {
+          if (current === downloadId) {
+            if (filtered.length > 0) {
+              const sorted = [...filtered].sort((a, b) => {
+                const aTime = a.started_at || a.id || 0;
+                const bTime = b.started_at || b.id || 0;
+                return aTime - bTime;
+              });
+              return sorted[0].id;
+            }
+            return null;
+          }
+          return current;
+        });
+        
+        return filtered;
+      });
     }
   }, []);
 
@@ -306,7 +479,19 @@ export function DownloadProvider({ children }) {
   }, []);
 
   return (
-    <DownloadContext.Provider value={{ downloads, history, stats, startDownload, stopDownload, pauseDownload, resumeDownload, removeDownload, clearHistory }}>
+    <DownloadContext.Provider value={{ 
+      downloads, 
+      history, 
+      stats, 
+      highlightedDownloadId,
+      setHighlightedDownloadId,
+      startDownload, 
+      stopDownload, 
+      pauseDownload, 
+      resumeDownload, 
+      removeDownload, 
+      clearHistory 
+    }}>
       {children}
     </DownloadContext.Provider>
   );

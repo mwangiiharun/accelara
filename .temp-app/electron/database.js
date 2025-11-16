@@ -126,8 +126,16 @@ async function getDatabase() {
         speed INTEGER DEFAULT 0,
         started_at INTEGER NOT NULL,
         completed_at INTEGER,
-        metadata TEXT
+        metadata TEXT,
+        error TEXT
       );`);
+      
+      // Add error column if it doesn't exist (for existing databases)
+      try {
+        db.run(`ALTER TABLE downloads ADD COLUMN error TEXT;`);
+      } catch (err) {
+        // Column already exists, ignore
+      }
       db.run(`CREATE TABLE IF NOT EXISTS download_history (
         id TEXT PRIMARY KEY,
         source TEXT NOT NULL,

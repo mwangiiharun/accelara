@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react';
 import { useSettings } from '../context/SettingsContext';
-import { Sun, Monitor, Sparkles, Folder, Check, Trash2, Loader2 } from 'lucide-react';
+import { Sun, Monitor, Sparkles, Folder, Check, Trash2, Loader2, Power, Bug } from 'lucide-react';
 
 export default function SettingsPanel() {
   const { settings, updateSettings } = useSettings();
@@ -400,6 +400,55 @@ export default function SettingsPanel() {
             </p>
           )}
         </div>
+      </div>
+
+      {/* Debug Logs */}
+      <div className="pt-4 border-t theme-border">
+        <button
+          onClick={async () => {
+            if (window.electronAPI && window.electronAPI.openDebugLogWindow) {
+              try {
+                await window.electronAPI.openDebugLogWindow();
+              } catch (error) {
+                console.error('Failed to open debug log window:', error);
+                alert('Failed to open debug log window. Make sure you are running in Tauri.');
+              }
+            } else {
+              alert('Debug log window feature not available. Make sure you are running in Tauri.');
+            }
+          }}
+          className="w-full flex items-center justify-center gap-2 px-4 py-2 rounded-lg transition-colors theme-bg-tertiary hover:theme-bg-primary theme-text-secondary hover:theme-text-primary"
+          type="button"
+        >
+          <Bug className="w-4 h-4" />
+          <span>View Debug Logs</span>
+        </button>
+        <p className="text-xs theme-text-tertiary mt-2 text-center">
+          Opens in a separate window that can be moved outside the main window
+        </p>
+      </div>
+
+      {/* Quit App */}
+      <div className="pt-4 border-t theme-border">
+        <button
+          onClick={async () => {
+            if (window.electronAPI && confirm('Are you sure you want to quit ACCELARA? All active downloads will be paused.')) {
+              try {
+                await window.electronAPI.quitApp();
+              } catch (error) {
+                console.error('Failed to quit app:', error);
+              }
+            }
+          }}
+          className="w-full flex items-center justify-center gap-2 px-4 py-2 rounded-lg transition-colors bg-red-500/20 hover:bg-red-500/30 text-red-500 dark:text-red-400"
+          type="button"
+        >
+          <Power className="w-4 h-4" />
+          <span>Quit ACCELARA</span>
+        </button>
+        <p className="text-xs theme-text-tertiary mt-2 text-center">
+          Note: Closing the window keeps the app running in the background. Use this button to fully quit.
+        </p>
       </div>
     </div>
   );

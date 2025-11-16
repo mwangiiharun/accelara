@@ -53,6 +53,24 @@ jobs:
           node-version: '22'
           cache: npm
 
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: stable
+
+      - name: Cache Rust dependencies
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/bin/
+            ~/.cargo/registry/index/
+            ~/.cargo/registry/cache/
+            ~/.cargo/git/db/
+            src-tauri/target/
+          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-
+
       - name: Build Go binaries
         shell: bash
         env:
@@ -74,6 +92,8 @@ jobs:
               echo "⚠ strip not available, skipping"
             fi
           fi
+          echo "Downloading Iris..."
+          bash scripts/download-iris.sh || echo "Warning: Failed to download Iris"
           echo "Binary sizes:"
           ls -lh bin/ || true
 
@@ -82,6 +102,9 @@ jobs:
 
       - name: Build Frontend
         run: npm run build:react
+
+      - name: Verify Resources
+        run: npm run verify:resources
 
       - name: Install Linux build dependencies
         if: matrix.platform == 'linux'
@@ -139,201 +162,88 @@ jobs:
             exit 1
           fi
 
-      - name: Build Electron App (macOS)
+      - name: Build Tauri App (macOS)
         if: matrix.platform == 'mac'
         shell: bash
+        env:
+          PATH: ${{ env.PATH }}:$HOME/.cargo/bin
         run: |
-            echo "=== Starting electron-builder (packaging only) ==="
+            echo "=== Building Tauri app ==="
+            export PATH="$HOME/.cargo/bin:$PATH"
+            
+            # Build Tauri app (Tauri handles DMG creation automatically)
             if [ "${{ matrix.goarch }}" == "amd64" ]; then
-              npx electron-builder --mac --dir --x64 --publish never 2>&1 | tee build.log || true
+              npx tauri build --bundles dmg --target x86_64-apple-darwin 2>&1 | tee build.log || exit 1
             else
-              npx electron-builder --mac --dir --arm64 --publish never 2>&1 | tee build.log || true
-            fi
-            echo ""
-            echo "=== Creating distribution files from app bundle ==="
-            # Find the app bundle
-            APP_BUNDLE=$(find release -name "ACCELARA.app" -type d 2>/dev/null | head -1)
-            if [ -z "$APP_BUNDLE" ]; then
-              APP_BUNDLE=$(find release -name "*.app" -type d 2>/dev/null | head -1)
+              npx tauri build --bundles dmg --target aarch64-apple-darwin 2>&1 | tee build.log || exit 1
             fi
             
-            if [ -n "$APP_BUNDLE" ] && [ -d "$APP_BUNDLE" ]; then
-              echo "Found app bundle: $APP_BUNDLE"
-              
-              # Verify binaries are in place
-              echo "=== Verifying binaries ==="
-              BIN_PATH="$APP_BUNDLE/Contents/Resources/bin"
-              if [ -d "$BIN_PATH" ]; then
-                echo "Bin directory exists: $BIN_PATH"
-                ls -lh "$BIN_PATH" || echo "Could not list bin directory"
-                if [ -f "$BIN_PATH/api-wrapper" ] || [ -f "$BIN_PATH/api-wrapper.exe" ]; then
-                  echo "✓ api-wrapper binary found"
-                else
-                  echo "✗ api-wrapper binary NOT found - copying manually..."
-                  # Copy binaries manually if afterPack didn't run
-                  mkdir -p "$BIN_PATH"
-                  if [ -f "bin/api-wrapper" ]; then
-                    cp "bin/api-wrapper" "$BIN_PATH/api-wrapper"
-                    chmod +x "$BIN_PATH/api-wrapper"
-                    echo "✓ Copied api-wrapper manually"
-                  fi
-                fi
-                if [ -f "$BIN_PATH/clidm" ] || [ -f "$BIN_PATH/clidm.exe" ]; then
-                  echo "✓ clidm binary found"
-                else
-                  echo "✗ clidm binary NOT found - copying manually..."
-                  if [ -f "bin/clidm" ]; then
-                    cp "bin/clidm" "$BIN_PATH/clidm"
-                    chmod +x "$BIN_PATH/clidm"
-                    echo "✓ Copied clidm manually"
-                  fi
-                fi
-              else
-                echo "✗ Bin directory NOT found - creating and copying binaries..."
-                mkdir -p "$BIN_PATH"
-                if [ -f "bin/api-wrapper" ]; then
-                  cp "bin/api-wrapper" "$BIN_PATH/api-wrapper"
-                  chmod +x "$BIN_PATH/api-wrapper"
-                  echo "✓ Created bin directory and copied api-wrapper"
-                fi
-                if [ -f "bin/clidm" ]; then
-                  cp "bin/clidm" "$BIN_PATH/clidm"
-                  chmod +x "$BIN_PATH/clidm"
-                  echo "✓ Copied clidm"
-                fi
-              fi
-              
-              # Create ZIP file (optional - DMG is primary)
-              ZIP_PATH="release/ACCELARA-mac-${{ matrix.goarch }}.zip"
-              echo ""
-              echo "=== Creating ZIP (optional) ==="
-              echo "ZIP path: $ZIP_PATH"
-              APP_DIR="$(dirname "$APP_BUNDLE")"
-              APP_NAME="$(basename "$APP_BUNDLE")"
-              WORKSPACE_ROOT="$(pwd)"
-              set +e  # Don't fail on ZIP errors
-              cd "$APP_DIR" || true
-              zip -r "$WORKSPACE_ROOT/$ZIP_PATH" "$APP_NAME" -q 2>&1 || {
-                echo "ZIP creation failed, trying alternative method..."
-                cd "$WORKSPACE_ROOT" || true
-                ditto -c -k --keepParent "$APP_BUNDLE" "$ZIP_PATH" 2>&1 || echo "Alternative ZIP method also failed (non-critical)"
-              }
-              ZIP_EXIT=$?
-              cd "$WORKSPACE_ROOT" || true
-              set -e  # Re-enable error handling
-              if [ -f "$ZIP_PATH" ]; then
-                echo "✓ ZIP created: $ZIP_PATH"
-                ls -lh "$ZIP_PATH"
-              else
-                echo "⚠ ZIP creation failed (non-critical - DMG is primary distribution format)"
-                echo "DMG was created successfully, which is the main distribution method"
-              fi
-              
-              # Verify binary exists before creating DMG
-              echo ""
-              echo "=== Pre-DMG Binary Verification ==="
-              BIN_PATH="$APP_BUNDLE/Contents/Resources/bin/api-wrapper"
-              if [ -f "$BIN_PATH" ]; then
-                echo "✓ api-wrapper binary verified at: $BIN_PATH"
-                ls -lh "$BIN_PATH"
-                # Verify it's executable
-                if [ -x "$BIN_PATH" ]; then
-                  echo "✓ Binary is executable"
-                else
-                  echo "✗ ERROR: Binary is not executable!"
-                  chmod +x "$BIN_PATH" || exit 1
-                  echo "✓ Fixed permissions"
-                fi
-              else
-                echo "✗ CRITICAL: api-wrapper binary not found before DMG creation!"
-                echo "  Expected: $BIN_PATH"
-                echo "  Bin directory contents:"
-                ls -la "$APP_BUNDLE/Contents/Resources/bin/" || echo "  Bin directory does not exist!"
-                exit 1
-              fi
-              
-              # Create DMG file using our custom script (primary distribution format)
-              # This script handles: app renaming, Info.plist updates, icon copying, 
-              # sql.js unpacking, app.asar creation, and DMG creation
-              echo ""
-              echo "=== Creating DMG using createDMG.js script (primary) ==="
-              node scripts/createDMG.js
-              
-              # Verify DMG was created
-              DMG_PATH="release/ACCELARA.dmg"
-              if [ -f "$DMG_PATH" ]; then
-                echo "✓ DMG created successfully: $DMG_PATH"
-                ls -lh "$DMG_PATH"
-                
-                # Post-DMG verification: Mount DMG and verify binary is accessible
-                echo ""
-                echo "=== Post-DMG Binary Verification ==="
-                MOUNT_POINT="/tmp/accelara_dmg_verify"
-                mkdir -p "$MOUNT_POINT"
-                hdiutil attach "$DMG_PATH" -mountpoint "$MOUNT_POINT" -quiet -nobrowse 2>&1 || {
-                  echo "⚠ Could not mount DMG for verification (non-critical)"
-                }
-                
-                if [ -d "$MOUNT_POINT/ACCELARA.app" ]; then
-                  DMG_BIN_PATH="$MOUNT_POINT/ACCELARA.app/Contents/Resources/bin/api-wrapper"
-                  if [ -f "$DMG_BIN_PATH" ]; then
-                    echo "✓ Binary verified in DMG at: $DMG_BIN_PATH"
-                    ls -lh "$DMG_BIN_PATH"
-                    if [ -x "$DMG_BIN_PATH" ]; then
-                      echo "✓ Binary is executable in DMG"
-                    else
-                      echo "⚠ Warning: Binary not executable in DMG (should not happen)"
-                    fi
-                  else
-                    echo "✗ ERROR: Binary not found in DMG!"
-                    echo "  Expected: $DMG_BIN_PATH"
-                    hdiutil detach "$MOUNT_POINT" -quiet 2>&1 || true
-                    exit 1
-                  fi
-                  hdiutil detach "$MOUNT_POINT" -quiet 2>&1 || true
-                else
-                  echo "⚠ Could not find ACCELARA.app in DMG for verification"
-                  hdiutil detach "$MOUNT_POINT" -quiet 2>&1 || true
-                fi
-                
-                # Rename to include architecture for artifact naming
-                ARCH_DMG="release/ACCELARA-mac-${{ matrix.goarch }}.dmg"
-                mv "$DMG_PATH" "$ARCH_DMG" || cp "$DMG_PATH" "$ARCH_DMG"
-                echo "✓ Renamed to: $ARCH_DMG"
-                ls -lh "$ARCH_DMG"
-                echo "✓ Build completed successfully"
-              else
-                echo "✗ DMG creation failed - DMG not found at: $DMG_PATH"
-                echo "This is critical - DMG is the primary distribution format"
-                exit 1
-              fi
-            else
-              echo "✗ App bundle not found!"
-              find release -name "*.app" -type d 2>/dev/null || echo "No app bundles found"
+            # Find the DMG file
+            DMG_PATH=$(find src-tauri/target/release/bundle/dmg -name "*.dmg" 2>/dev/null | head -1)
+            
+            if [ -z "$DMG_PATH" ]; then
+              echo "✗ ERROR: DMG file not found!"
+              echo "Searching in bundle directory:"
+              find src-tauri/target/release/bundle -type f 2>/dev/null || echo "No files found"
               exit 1
             fi
+            
+            echo "✓ DMG created: $DMG_PATH"
+            ls -lh "$DMG_PATH"
+            
+            # Copy to release directory with architecture naming
+            mkdir -p release
+            ARCH_DMG="release/ACCELARA-mac-${{ matrix.goarch }}.dmg"
+            cp "$DMG_PATH" "$ARCH_DMG"
+            echo "✓ Copied to: $ARCH_DMG"
+            ls -lh "$ARCH_DMG"
+            
+            # Verify binaries in app bundle
+            APP_BUNDLE=$(find src-tauri/target/release/bundle/macos -name "*.app" -type d 2>/dev/null | head -1)
+            if [ -n "$APP_BUNDLE" ]; then
+              echo "=== Verifying binaries in app bundle ==="
+              BIN_PATH="$APP_BUNDLE/Contents/Resources/bin"
+              if [ -d "$BIN_PATH" ]; then
+                echo "✓ Bin directory found: $BIN_PATH"
+                ls -lh "$BIN_PATH" || echo "Could not list bin directory"
+                if [ -f "$BIN_PATH/api-wrapper" ] && [ -f "$BIN_PATH/iris" ]; then
+                  echo "✓ All binaries verified"
+                else
+                  echo "⚠ Warning: Some binaries missing (Tauri should have bundled them)"
+                fi
+              else
+                echo "⚠ Warning: Bin directory not found (Tauri should have created it)"
+              fi
+            fi
+            
+            echo "✓ macOS build completed successfully"
 
-      - name: Build Electron App (Windows)
+      - name: Build Tauri App (Windows)
         if: matrix.platform == 'win'
         shell: bash
+        env:
+          PATH: ${{ env.PATH }}:$HOME/.cargo/bin
         run: |
           echo "=== Building Windows installer ==="
-          npx electron-builder --win --x64 --publish never 2>&1 | tee build.log || true
+          export PATH="$HOME/.cargo/bin:$PATH"
+          npx tauri build --bundles msi --target x86_64-pc-windows-msvc 2>&1 | tee build.log || exit 1
           echo ""
           echo "=== Windows build output ==="
-          if [ -d "release" ]; then
-            find release -name "*.exe" -type f 2>/dev/null || echo "No .exe files found"
+          if [ -d "src-tauri/target/release/bundle" ]; then
+            find src-tauri/target/release/bundle -name "*.msi" -o -name "*.exe" -type f 2>/dev/null || echo "No installer files found"
+            # Copy to release directory
+            mkdir -p release
+            find src-tauri/target/release/bundle -name "*.msi" -o -name "*.exe" -type f -exec cp {} release/ \;
           fi
 
-      - name: Build Electron App (Linux)
+      - name: Build Tauri App (Linux)
         if: matrix.platform == 'linux'
         shell: bash
+        env:
+          PATH: ${{ env.PATH }}:$HOME/.cargo/bin
         run: |
+          export PATH="$HOME/.cargo/bin:$PATH"
           echo "=== Building Linux AppImage ==="
-          # Check if icon exists, if not, electron-builder will use default
-          if [ ! -f "build/icon.png" ]; then
-          echo "⚠ Warning: build/icon.png not found, electron-builder will use default icon"
-          fi
           
           # Verify prerequisites before building
           if [ ! -f "bin/api-wrapper" ]; then
@@ -345,338 +255,49 @@ jobs:
             exit 1
           fi
           
-          # Install AppImageTool if not available (required for AppImage creation)
-          # Use unsquashfs to extract AppImage if available, otherwise let electron-builder handle it
-          if ! command -v appimagetool &> /dev/null; then
-            echo "Installing AppImageTool..."
-            
-            # Check if unsquashfs is available for extraction
-            if command -v unsquashfs &> /dev/null; then
-              echo "Using unsquashfs to extract AppImageTool..."
-              wget -q https://github.com/AppImage/AppImageKit/releases/download/continuous/appimagetool-x86_64.AppImage -O /tmp/appimagetool.AppImage
-              chmod +x /tmp/appimagetool.AppImage
-              
-              # Extract using unsquashfs (no FUSE needed)
-              cd /tmp
-              unsquashfs -d squashfs-root appimagetool.AppImage > /dev/null 2>&1 || {
-                echo "⚠ unsquashfs extraction failed, trying alternative method..."
-                # Try the AppImage's own extraction
-                ./appimagetool.AppImage --appimage-extract > /dev/null 2>&1 || true
-              }
-              
-              # Find the extracted binary
-              if [ -f "/tmp/squashfs-root/AppRun" ]; then
-                mkdir -p ~/.local/bin
-                ln -sf /tmp/squashfs-root/AppRun ~/.local/bin/appimagetool
-                export PATH="$HOME/.local/bin:$PATH"
-                echo "✓ AppImageTool extracted and installed at ~/.local/bin/appimagetool"
-              elif [ -f "/tmp/squashfs-root/appimagetool" ]; then
-                mkdir -p ~/.local/bin
-                ln -sf /tmp/squashfs-root/appimagetool ~/.local/bin/appimagetool
-                export PATH="$HOME/.local/bin:$PATH"
-                echo "✓ AppImageTool extracted and installed at ~/.local/bin/appimagetool"
-              else
-                echo "⚠ Could not find extracted binary, electron-builder will download its own"
-              fi
-              cd - > /dev/null
-            else
-              echo "⚠ unsquashfs not available - electron-builder will download AppImageTool automatically"
-              echo "  (This is normal - electron-builder has its own AppImageTool download mechanism)"
-            fi
-          fi
+          # Build Tauri app (Tauri handles AppImage creation automatically)
+          npx tauri build --bundles appimage --target x86_64-unknown-linux-gnu 2>&1 | tee build.log || exit 1
           
-          # Verify appimagetool is accessible
-          echo "Verifying appimagetool installation..."
-          if command -v appimagetool &> /dev/null; then
-            echo "✓ appimagetool found at: $(which appimagetool)"
-          else
-            echo "⚠ appimagetool not in PATH - electron-builder will download its own (this is OK)"
-          fi
+          # Find the AppImage file
+          APPIMAGE=$(find src-tauri/target/release/bundle/appimage -name "*.AppImage" 2>/dev/null | head -1)
           
-          echo "Running electron-builder for Linux..."
-          # Ensure appimagetool is in PATH for electron-builder
-          export PATH="$HOME/.local/bin:$PATH"
-          # Explicitly specify AppImage target and ensure we're not using --dir
-          # electron-builder should create AppImage based on config, but let's be explicit
-          if npx electron-builder --linux AppImage --x64 --publish never 2>&1 | tee build.log; then
-            echo "✓ electron-builder completed successfully"
-          else
-            BUILD_EXIT_CODE=$?
-            echo "✗ electron-builder failed with exit code: $BUILD_EXIT_CODE"
-            echo ""
-            echo "=== Build log (last 100 lines) ==="
-            if [ -f "build.log" ]; then
-              tail -100 build.log
-            fi
-            echo ""
-            echo "=== Checking for partial build artifacts ==="
-            find release -type f 2>/dev/null | head -20 || echo "No artifacts found"
-            exit $BUILD_EXIT_CODE
-          fi
-          echo ""
-          echo "=== Checking build.log for AppImage creation ==="
-          if [ -f "build.log" ]; then
-            echo "Searching for AppImage-related messages:"
-            grep -i "appimage\|packaging\|building" build.log | tail -20 || echo "No AppImage messages found"
-            echo ""
-            echo "Checking for warnings or errors:"
-            grep -i "warn\|error\|fail" build.log | tail -30 || echo "No warnings/errors found"
-          fi
-          
-          echo ""
-          echo "=== Linux build output ==="
-          if [ -d "release" ]; then
-            echo "All files in release:"
-            find release -type f -name "*.AppImage" 2>/dev/null || echo "No AppImage files found"
-            find release -type d -name "*unpacked*" 2>/dev/null || echo "No unpacked directories found"
-            echo ""
-            echo "Full release directory structure:"
-            ls -la release/ 2>/dev/null || echo "Cannot list release directory"
-            echo ""
-            echo "AppImage files:"
-            APPIMAGE_COUNT=$(find release -name "*.AppImage" -type f 2>/dev/null | wc -l)
-            if [ "$APPIMAGE_COUNT" -gt 0 ]; then
-              echo "✓ Found $APPIMAGE_COUNT AppImage file(s):"
-              find release -name "*.AppImage" -type f 2>/dev/null | while read -r img; do
-                echo "  - $img ($(du -h "$img" | cut -f1))"
-              done
-            else
-              echo "✗ ERROR: No AppImage files found!"
-              echo "  Release directory contents:"
-              find release -type f 2>/dev/null | head -30
-              echo ""
-              echo "  Full build.log (last 100 lines):"
-              if [ -f "build.log" ]; then
-                tail -100 build.log
-              fi
-              echo ""
-              echo "  Attempting to manually create AppImage from unpacked directory..."
-              UNPACKED_DIR=$(find release -type d -name "*unpacked" 2>/dev/null | head -1)
-              MANUAL_APPIMAGE_CREATED=false
-              if [ -n "$UNPACKED_DIR" ]; then
-                echo "  Found unpacked directory: $UNPACKED_DIR"
-                
-                # Try to use extracted appimagetool
-                APPIMAGETOOL_CMD=""
-                if [ -f "/tmp/squashfs-root/AppRun" ]; then
-                  APPIMAGETOOL_CMD="/tmp/squashfs-root/AppRun"
-                elif [ -f "/tmp/squashfs-root/appimagetool" ]; then
-                  APPIMAGETOOL_CMD="/tmp/squashfs-root/appimagetool"
-                elif command -v appimagetool &> /dev/null; then
-                  APPIMAGETOOL_CMD="appimagetool"
-                fi
-                
-                if [ -n "$APPIMAGETOOL_CMD" ]; then
-                  echo "  Creating AppImage manually using: $APPIMAGETOOL_CMD"
-                  # Try to get version from package.json or use tag
-                  VERSION=$(node -p "require('./package.json').version" 2>/dev/null || echo "${GITHUB_REF#refs/tags/}")
-                  APPIMAGE_NAME="ACCELARA-${VERSION}-x86_64.AppImage"
-                  
-                  # Create AppDir structure if needed
-                  echo "  Checking AppDir structure..."
-                  NEEDS_STRUCTURE=false
-                  
-                  # Check for AppRun
-                  if [ ! -f "$UNPACKED_DIR/AppRun" ]; then
-                    echo "  Creating AppRun script..."
-                    if [ -f "$UNPACKED_DIR/ACCELARA" ]; then
-                      echo '#!/bin/bash' > "$UNPACKED_DIR/AppRun"
-                      echo 'HERE="$(dirname "$(readlink -f "${0}")")"' >> "$UNPACKED_DIR/AppRun"
-                      echo 'exec "${HERE}/ACCELARA" "$@"' >> "$UNPACKED_DIR/AppRun"
-                      chmod +x "$UNPACKED_DIR/AppRun"
-                      NEEDS_STRUCTURE=true
-                    fi
-                  fi
-                  
-                  # Check for .desktop file (required by appimagetool)
-                  # AppDir structure requires .desktop file at root or in usr/share/applications/
-                  DESKTOP_FILE=$(find "$UNPACKED_DIR" -name "*.desktop" -type f 2>/dev/null | head -1)
-                  if [ -z "$DESKTOP_FILE" ]; then
-                    echo "  Creating .desktop file..."
-                    # Try root first (AppDir standard)
-                    DESKTOP_FILE="$UNPACKED_DIR/accelara.desktop"
-                    # Also create in usr/share/applications/ (standard Linux location)
-                    mkdir -p "$UNPACKED_DIR/usr/share/applications"
-                    DESKTOP_FILE_ALT="$UNPACKED_DIR/usr/share/applications/accelara.desktop"
-                    
-                    # Find the actual executable name
-                    EXEC_NAME="ACCELARA"
-                    if [ -f "$UNPACKED_DIR/ACCELARA" ]; then
-                      EXEC_NAME="ACCELARA"
-                    elif [ -f "$UNPACKED_DIR/accelara" ]; then
-                      EXEC_NAME="accelara"
-                    fi
-                    
-                    # Create .desktop file (avoid heredoc in YAML, use printf instead)
-                    printf '[Desktop Entry]\nName=ACCELARA\nComment=Unified HTTP + BitTorrent Download Manager\nExec=%s\nIcon=accelara\nType=Application\nCategories=Utility;Network;\nStartupNotify=false\n' "$EXEC_NAME" > "$DESKTOP_FILE"
-                    cp "$DESKTOP_FILE" "$DESKTOP_FILE_ALT"
-                    echo "  Created .desktop files at: $DESKTOP_FILE and $DESKTOP_FILE_ALT"
-                    NEEDS_STRUCTURE=true
-                  else
-                    echo "  Found existing .desktop file: $DESKTOP_FILE"
-                  fi
-                  
-                  # Check for icon and copy if needed
-                  ICON_FILE=$(find "$UNPACKED_DIR" -name "*.png" -o -name "icon.png" -o -name "accelara.png" 2>/dev/null | head -1)
-                  if [ -z "$ICON_FILE" ]; then
-                    echo "  Copying icon to AppDir..."
-                    # Try to find icon in build directory
-                    if [ -f "build/icon.png" ]; then
-                      cp "build/icon.png" "$UNPACKED_DIR/accelara.png"
-                      echo "  ✓ Copied build/icon.png to $UNPACKED_DIR/accelara.png"
-                      NEEDS_STRUCTURE=true
-                    elif [ -f "build/icon.icns" ]; then
-                      # Try to convert icns to png if ImageMagick is available
-                      if command -v convert &> /dev/null; then
-                        convert "build/icon.icns" "$UNPACKED_DIR/accelara.png" 2>/dev/null && {
-                          echo "  ✓ Converted build/icon.icns to $UNPACKED_DIR/accelara.png"
-                          NEEDS_STRUCTURE=true
-                        } || echo "  ⚠ Could not convert icon.icns to png"
-                      else
-                        echo "  ⚠ No icon.png found and ImageMagick not available for conversion"
-                      fi
-                    else
-                      echo "  ⚠ No icon file found in build/ directory"
-                    fi
-                  else
-                    echo "  ✓ Icon found: $ICON_FILE"
-                  fi
-                  
-                  if [ "$NEEDS_STRUCTURE" = "true" ]; then
-                    echo "  ✓ AppDir structure created/updated"
-                  else
-                    echo "  ✓ AppDir structure already complete"
-                  fi
-                  
-                  # Ensure we're in the right directory and use absolute paths
-                  WORKSPACE_ROOT="$(pwd)"
-                  cd "$WORKSPACE_ROOT"
-                  
-                  # Verify .desktop file exists before creating AppImage
-                  echo "  Verifying AppDir structure before creating AppImage..."
-                  echo "  AppDir: $UNPACKED_DIR"
-                  # Re-check AppRun (it should exist if we created it)
-                  if [ ! -f "$UNPACKED_DIR/AppRun" ]; then
-                    echo "  ⚠ AppRun not found, recreating..."
-                    if [ -f "$UNPACKED_DIR/ACCELARA" ]; then
-                      echo '#!/bin/bash' > "$UNPACKED_DIR/AppRun"
-                      echo 'HERE="$(dirname "$(readlink -f "${0}")")"' >> "$UNPACKED_DIR/AppRun"
-                      echo 'exec "${HERE}/ACCELARA" "$@"' >> "$UNPACKED_DIR/AppRun"
-                      chmod +x "$UNPACKED_DIR/AppRun"
-                      echo "  ✓ AppRun recreated"
-                    fi
-                  fi
-                  echo "  AppRun exists: $([ -f "$UNPACKED_DIR/AppRun" ] && echo 'yes' || echo 'no')"
-                  echo "  .desktop files found:"
-                  find "$UNPACKED_DIR" -name "*.desktop" -type f 2>/dev/null | while read -r f; do
-                    echo "    - $f"
-                    cat "$f" | head -5
-                  done || echo "    (none found)"
-                  
-                  # Try creating AppImage with verbose output
-                  echo "  Running: $APPIMAGETOOL_CMD \"$UNPACKED_DIR\" \"release/$APPIMAGE_NAME\""
-                  # Use --no-appstream to skip AppStream validation if needed
-                  if $APPIMAGETOOL_CMD --no-appstream "$UNPACKED_DIR" "release/$APPIMAGE_NAME" 2>&1; then
-                    if [ -f "release/$APPIMAGE_NAME" ]; then
-                      echo "  ✓ Successfully created AppImage manually: release/$APPIMAGE_NAME"
-                      ls -lh "release/$APPIMAGE_NAME"
-                      MANUAL_APPIMAGE_CREATED=true
-                    fi
-                  else
-                    echo "  Manual AppImage creation failed (may need FUSE or different approach)"
-                  fi
-                else
-                  echo "  Cannot create AppImage manually (appimagetool not available)"
-                fi
-              else
-                echo "  Cannot create AppImage manually (missing unpacked directory)"
-              fi
-              # Exit with error only if we couldn't create AppImage manually either
-              if [ "$MANUAL_APPIMAGE_CREATED" != "true" ] && [ "$APPIMAGE_COUNT" -eq 0 ]; then
-                exit 1
-              fi
-            fi
-            echo ""
-            echo "ACCELARA files:"
-            find release -name "ACCELARA*" -type f 2>/dev/null || echo "No ACCELARA files found"
-            echo ""
-            echo "Checking build.log for warnings:"
-            if [ -f "build.log" ]; then
-              grep -i "warn" build.log | tail -10 || echo "No warnings found"
-            fi
-          else
-            echo "✗ ERROR: Release directory does not exist!"
-            echo "  This means electron-builder did not create any output"
-            if [ -f "build.log" ]; then
-              echo "  === Last 100 lines of build.log ==="
-              tail -100 build.log
-            fi
+          if [ -z "$APPIMAGE" ]; then
+            echo "✗ ERROR: AppImage file not found!"
+            echo "Searching in bundle directory:"
+            find src-tauri/target/release/bundle -type f 2>/dev/null || echo "No files found"
             exit 1
           fi
           
-          # Verify binary in AppImage (Linux)
-          echo ""
-          echo "=== Linux Binary Verification ==="
-          APPIMAGE=$(find release -name "*.AppImage" -type f 2>/dev/null | head -1 || true)
-          if [ -n "$APPIMAGE" ]; then
-            echo "Found AppImage: $APPIMAGE"
-            
-            # Make AppImage executable if not already
-            chmod +x "$APPIMAGE" || true
-            
-            # Extract AppImage to verify binary (AppImages are squashfs files)
-            EXTRACT_DIR="/tmp/accelara_appimage_extract_$$"
-            mkdir -p "$EXTRACT_DIR"
-            
-            # Try to extract AppImage (requires unsquashfs or AppImage tools)
-            if command -v unsquashfs &> /dev/null; then
-              echo "Extracting AppImage to verify binary..."
-              unsquashfs -d "$EXTRACT_DIR" "$APPIMAGE" resources/bin/api-wrapper 2>/dev/null || {
-                # Try extracting entire AppImage
-                unsquashfs -d "$EXTRACT_DIR" "$APPIMAGE" 2>/dev/null || echo "Could not extract AppImage"
-              }
-              
-              # Check for binary in extracted location
-              BIN_PATHS=(
-                "$EXTRACT_DIR/resources/bin/api-wrapper"
-                "$EXTRACT_DIR/bin/api-wrapper"
-                "$EXTRACT_DIR/usr/bin/api-wrapper"
-              )
-              
-              BIN_FOUND=false
-              for BIN_PATH in "${BIN_PATHS[@]}"; do
-                if [ -f "$BIN_PATH" ]; then
-                  echo "✓ Binary found in AppImage at: $BIN_PATH"
-                  ls -lh "$BIN_PATH"
-                  if [ -x "$BIN_PATH" ]; then
-                    echo "✓ Binary is executable in AppImage"
-                    BIN_FOUND=true
-                    break
-                  else
-                    echo "⚠ Warning: Binary not executable in AppImage"
-                  fi
-                fi
-              done
-              
-              if [ "$BIN_FOUND" = false ]; then
-                echo "⚠ Could not verify binary in AppImage (extraction may have failed)"
-                echo "  This is non-critical - binary should still be included by electron-builder"
+          echo "✓ AppImage created: $APPIMAGE"
+          ls -lh "$APPIMAGE"
+          
+          # Copy to release directory
+          mkdir -p release
+          cp "$APPIMAGE" release/ACCELARA-linux-x64.AppImage
+          echo "✓ Copied to: release/ACCELARA-linux-x64.AppImage"
+          ls -lh release/ACCELARA-linux-x64.AppImage
+          
+          # Make executable
+          chmod +x release/ACCELARA-linux-x64.AppImage
+          echo "✓ Made AppImage executable"
+          
+          # Verify binaries in app bundle (if unpacked version exists)
+          UNPACKED_DIR=$(find src-tauri/target/release -name "*unpacked" -type d 2>/dev/null | head -1)
+          if [ -n "$UNPACKED_DIR" ]; then
+            echo "=== Verifying binaries in unpacked directory ==="
+            BIN_PATH="$UNPACKED_DIR/resources/bin"
+            if [ -d "$BIN_PATH" ]; then
+              echo "✓ Bin directory found: $BIN_PATH"
+              ls -lh "$BIN_PATH" || echo "Could not list bin directory"
+              if [ -f "$BIN_PATH/api-wrapper" ] && [ -f "$BIN_PATH/iris" ]; then
+                echo "✓ All binaries verified"
+              else
+                echo "⚠ Warning: Some binaries missing (Tauri should have bundled them)"
               fi
-              
-              # Clean up
-              rm -rf "$EXTRACT_DIR"
-            else
-              echo "⚠ unsquashfs not available - skipping AppImage binary verification"
-              echo "  Binary should still be included by electron-builder's afterPack hook"
-              echo "  Verifying AppImage exists and is executable:"
-              ls -lh "$APPIMAGE"
-              test -x "$APPIMAGE" && echo "✓ AppImage is executable" || echo "⚠ AppImage is not executable"
             fi
-          else
-            echo "⚠ AppImage not found - cannot verify binary"
           fi
-        env:
-          ELECTRON_SKIP_BINARY_DOWNLOAD: 'false'
+          
+          echo "✓ Linux build completed successfully"
       
       - name: List build outputs
         shell: bash

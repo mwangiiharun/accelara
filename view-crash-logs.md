@@ -4,16 +4,21 @@
 Run the app directly from terminal to see all output:
 
 ```bash
-# From project root
-release/mac-arm64/ACCELARA.app/Contents/MacOS/Electron
-```
+# From project root - use the run script
+./scripts/run-release.sh
 
-Or if the app is renamed:
-```bash
-release/mac-arm64/ACCELARA.app/Contents/MacOS/ACCELARA
+# Or run directly with logging enabled
+cd /Users/mwangiiharun/projects/open-source/accelara
+export ELECTRON_ENABLE_LOGGING=1
+export ELECTRON_ENABLE_STACK_DUMPING=1
+release/mac-arm64/ACCELARA.app/Contents/MacOS/ACCELARA 2>&1 | tee /tmp/accelara-console.log
+
+# Or use open command with arguments
+open -a release/mac-arm64/ACCELARA.app --args --enable-logging
 ```
 
 This will show all console.log, console.error, and stderr output in real-time.
+Logs are also saved to `/tmp/accelara-console.log` when using the script.
 
 ## Method 2: View Recent System Logs
 View recent logs from the last 5 minutes:

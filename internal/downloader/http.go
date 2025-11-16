@@ -9,6 +9,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strconv"
 	"strings"
 	"sync"
@@ -75,9 +76,18 @@ func NewHTTPDownloader(sourceURL, outPath string, opts Options) *HTTPDownloader 
 		}
 	}
 
+	// Set client timeout to a very long value (or 0 for no timeout)
+	// We manage read deadlines manually per chunk, so we don't want the client
+	// to timeout the entire request. Use a very long timeout (1 hour) as a safety net.
+	clientTimeout := time.Hour
+	if opts.ReadTimeout > 0 {
+		// Use read timeout * 100 as a safety net (much longer than any single read)
+		clientTimeout = time.Duration(opts.ReadTimeout) * 100 * time.Second
+	}
+	
 	client := &http.Client{
 		Transport: transport,
-		Timeout:   time.Duration(opts.ConnectTimeout) * time.Second,
+		Timeout:   clientTimeout, // Very long timeout - we manage read deadlines manually
 		CheckRedirect: func(req *http.Request, via []*http.Request) error {
 			// Follow redirects automatically
 			// Limit redirect chain to prevent infinite loops (max 10 redirects)
@@ -132,13 +142,7 @@ func (d *HTTPDownloader) resolveRedirects() error {
 	// Get final URL after redirects
 	finalURL := resp.Request.URL.String()
 	if finalURL != d.sourceURL {
-		if d.reporter != nil {
-			d.reporter.Report(map[string]interface{}{
-				"type":    "http",
-				"status":  "info",
-				"message": fmt.Sprintf("Following redirect: %s -> %s", d.sourceURL, finalURL),
-			})
-		}
+		// Update sourceURL silently (no UI log)
 		d.sourceURL = finalURL
 	}
 
@@ -389,13 +393,7 @@ func (d *HTTPDownloader) probe() error {
 	// Update sourceURL to final URL after redirects
 	finalURL := resp.Request.URL.String()
 	if finalURL != d.sourceURL {
-		if d.reporter != nil {
-			d.reporter.Report(map[string]interface{}{
-				"type":    "http",
-				"status":  "info",
-				"message": fmt.Sprintf("Redirected to: %s", finalURL),
-			})
-		}
+		// Update sourceURL silently (no UI log)
 		d.sourceURL = finalURL
 	}
 
@@ -413,13 +411,7 @@ func (d *HTTPDownloader) probe() error {
 		// Update sourceURL again if GET request was redirected
 		finalURL2 := resp2.Request.URL.String()
 		if finalURL2 != d.sourceURL {
-			if d.reporter != nil {
-				d.reporter.Report(map[string]interface{}{
-					"type":    "http",
-					"status":  "info",
-					"message": fmt.Sprintf("Redirected to: %s", finalURL2),
-				})
-			}
+			// Update sourceURL silently (no UI log)
 			d.sourceURL = finalURL2
 		}
 		
@@ -530,13 +522,7 @@ func (d *HTTPDownloader) downloadSingle() error {
 	// Update sourceURL to final URL after redirects (in case redirects happen during download)
 	finalURL := resp.Request.URL.String()
 	if finalURL != d.sourceURL {
-		if d.reporter != nil {
-			d.reporter.Report(map[string]interface{}{
-				"type":    "http",
-				"status":  "info",
-				"message": fmt.Sprintf("Redirected during download to: %s", finalURL),
-			})
-		}
+		// Update sourceURL silently (no UI log)
 		d.sourceURL = finalURL
 	}
 
@@ -627,6 +613,16 @@ func (d *HTTPDownloader) downloadSingle() error {
 			break
 		}
 		if err != nil {
+			// Log error with context before handling
+			if d.reporter != nil {
+				d.reporter.Report(map[string]interface{}{
+					"type":    "http",
+					"status":  "error",
+					"message": fmt.Sprintf("Read error: %v", err),
+					"error":   err.Error(),
+				})
+			}
+			
 			// Handle connection errors - pause download
 			if isConnectionError(err) {
 				retryErr := d.handleConnectionFailure(err)
@@ -737,6 +733,16 @@ func (d *HTTPDownloader) downloadSegmented() error {
 	var wg sync.WaitGroup
 	failedChunks := make(map[int]error)
 	failedMutex := sync.Mutex{}
+	
+	// Track connection/timeout failures to detect blocking
+	connectionFailureCount := 0
+	failureMutex := sync.Mutex{}
+	
+	// Threshold: if more than 50% of chunks fail with connection/timeout errors, fallback
+	failureThreshold := len(d.chunks) / 2
+	if failureThreshold < 1 {
+		failureThreshold = 1
+	}
 
 	for i, ch := range d.chunks {
 		wg.Add(1)
@@ -744,6 +750,22 @@ func (d *HTTPDownloader) downloadSegmented() error {
 			defer wg.Done()
 			sem <- struct{}{}
 			defer func() { <-sem }()
+			
+			// Add panic recovery with memory logging
+			defer func() {
+				if r := recover(); r != nil {
+					if d.reporter != nil {
+						d.reporter.Report(map[string]interface{}{
+							"type":    "http",
+							"status":  "error",
+							"message": fmt.Sprintf("Part %d panic: %v", idx, r),
+						})
+					}
+					failedMutex.Lock()
+					failedChunks[idx] = fmt.Errorf("panic in chunk %d: %v", idx, r)
+					failedMutex.Unlock()
+				}
+			}()
 
 			for attempt := 0; attempt <= d.retries; attempt++ {
 				// Check if paused
@@ -776,18 +798,64 @@ func (d *HTTPDownloader) downloadSegmented() error {
 					return
 				}
 				
-				// Handle connection errors with retry logic
-				if isConnectionError(err) {
-					retryErr := d.handleConnectionFailure(err)
-					if retryErr != nil && strings.Contains(retryErr.Error(), "paused") {
-						// Download was paused due to too many failures
+				// Check if this is a connection/timeout error that might indicate blocking
+				isConnErr := isConnectionError(err)
+				isTimeoutErr := strings.Contains(errStr, "timeout") || 
+				               strings.Contains(errStr, "deadline exceeded") ||
+				               strings.Contains(errStr, "context deadline exceeded") ||
+				               strings.Contains(errStr, "Client.Timeout") ||
+				               strings.Contains(errStr, "too many consecutive read timeouts")
+				
+				if isConnErr || isTimeoutErr {
+					// Track connection failures
+					failureMutex.Lock()
+					connectionFailureCount++
+					shouldFallback := connectionFailureCount >= failureThreshold
+					failureMutex.Unlock()
+					
+					// If too many chunks are failing with connection errors, likely being blocked
+					if shouldFallback && d.concurrency > 1 {
+						d.multiConnectionMutex.Lock()
+						d.multiConnectionFailed = true
+						d.multiConnectionMutex.Unlock()
+						
+						if d.reporter != nil {
+							d.reporter.Report(map[string]interface{}{
+								"type":    "http",
+								"status":  "warning",
+								"message": fmt.Sprintf("Multiple chunks failing with connection errors (%d/%d). Server may be blocking multiple connections. Falling back to single connection...",
+									connectionFailureCount, len(d.chunks)),
+							})
+						}
+						
+						// Mark this chunk as failed and return to trigger fallback
 						failedMutex.Lock()
-						failedChunks[idx] = retryErr
+						failedChunks[idx] = err
 						failedMutex.Unlock()
 						return
 					}
-					// Continue retry loop
-					continue
+					
+					// Handle connection errors with retry logic
+					if isConnErr {
+						retryErr := d.handleConnectionFailure(err)
+						if retryErr != nil && strings.Contains(retryErr.Error(), "paused") {
+							// Download was paused due to too many failures
+							failedMutex.Lock()
+							failedChunks[idx] = retryErr
+							failedMutex.Unlock()
+							return
+						}
+						// Continue retry loop
+						continue
+					}
+					
+					// For timeout errors, continue retry loop
+					if isTimeoutErr {
+						if attempt < d.retries {
+							time.Sleep(time.Duration(attempt+1) * 500 * time.Millisecond)
+							continue
+						}
+					}
 				}
 				
 				if attempt < d.retries {
@@ -802,6 +870,28 @@ func (d *HTTPDownloader) downloadSegmented() error {
 	}
 
 	wg.Wait()
+	
+	// Log chunk status after all goroutines finish (simplified - only show incomplete parts)
+	if d.reporter != nil && len(failedChunks) > 0 {
+		d.chunkMutex.Lock()
+		var incompleteParts []string
+		for i := range d.chunks {
+			chunkSize := d.chunks[i].end - d.chunks[i].start + 1
+			progress := d.chunkProgress[i]
+			if progress < chunkSize {
+				incompleteParts = append(incompleteParts, fmt.Sprintf("Part %d: %.1f%%", i, float64(progress)/float64(chunkSize)*100))
+			}
+		}
+		d.chunkMutex.Unlock()
+		
+		if len(incompleteParts) > 0 {
+			d.reporter.Report(map[string]interface{}{
+				"type":    "http",
+				"status":  "info",
+				"message": fmt.Sprintf("Parts: %s", strings.Join(incompleteParts, ", ")),
+			})
+		}
+	}
 	
 	// Check if multi-connection failed and fall back to single connection
 	d.multiConnectionMutex.Lock()
@@ -836,17 +926,48 @@ func (d *HTTPDownloader) downloadSegmented() error {
 	}
 
 	// Verify all chunks are complete before merging
+	// First, check actual file sizes to see if chunks completed but progress wasn't updated
+	fileName := filepath.Base(d.outPath)
 	d.chunkMutex.Lock()
 	allChunksComplete := true
 	totalChunkDownloaded := int64(0)
 	var incompleteChunks []int
+	var chunkDetails []string
+	
 	for i := range d.chunks {
 		chunkSize := d.chunks[i].end - d.chunks[i].start + 1
-		if d.chunkProgress[i] < chunkSize {
+		progress := d.chunkProgress[i]
+		
+		// Check actual file size
+		partPath := filepath.Join(d.tempDir, fmt.Sprintf("%s.part.%d.%d", fileName, d.chunks[i].start, d.chunks[i].end))
+		fileInfo, fileErr := os.Stat(partPath)
+		fileSize := int64(0)
+		if fileInfo != nil {
+			fileSize = fileInfo.Size()
+		}
+		
+		// Use file size if it's larger than tracked progress (chunk may have completed but progress not updated)
+		if fileSize > progress {
+			if d.reporter != nil {
+				d.reporter.Report(map[string]interface{}{
+					"type":    "http",
+					"status":  "info",
+					"message": fmt.Sprintf("Chunk %d: file size (%d) > tracked progress (%d), updating progress", i, fileSize, progress),
+				})
+			}
+			d.chunkProgress[i] = fileSize
+			progress = fileSize
+		}
+		
+		if progress < chunkSize {
 			allChunksComplete = false
 			incompleteChunks = append(incompleteChunks, i)
+			chunkDetails = append(chunkDetails, fmt.Sprintf("chunk %d: progress=%d/%d, file=%d bytes, exists=%v", 
+				i, progress, chunkSize, fileSize, fileErr == nil))
+		} else {
+			chunkDetails = append(chunkDetails, fmt.Sprintf("chunk %d: complete (%d/%d bytes)", i, progress, chunkSize))
 		}
-		totalChunkDownloaded += d.chunkProgress[i]
+		totalChunkDownloaded += progress
 	}
 	d.chunkMutex.Unlock()
 	
@@ -856,7 +977,20 @@ func (d *HTTPDownloader) downloadSegmented() error {
 	d.downloadedMutex.Unlock()
 	
 	if !allChunksComplete {
-		return fmt.Errorf("not all chunks completed: chunks %v incomplete, downloaded %d of %d bytes", incompleteChunks, totalChunkDownloaded, d.totalSize)
+		errorMsg := fmt.Sprintf("not all chunks completed: chunks %v incomplete, downloaded %d of %d bytes. Details: %s", 
+			incompleteChunks, totalChunkDownloaded, d.totalSize, strings.Join(chunkDetails, "; "))
+		
+		if d.reporter != nil {
+			var m runtime.MemStats
+			runtime.ReadMemStats(&m)
+			d.reporter.Report(map[string]interface{}{
+				"type":    "http",
+				"status":  "error",
+				"message": errorMsg,
+				"error":   errorMsg,
+			})
+		}
+		return fmt.Errorf(errorMsg)
 	}
 	
 	// Verify total downloaded matches expected (allow small rounding differences)
@@ -927,6 +1061,8 @@ func (d *HTTPDownloader) downloadSegmented() error {
 }
 
 func (d *HTTPDownloader) downloadChunk(idx int, c chunk) error {
+	// Removed verbose logging - chunk progress is shown in status updates
+	
 	// Store chunks in temp directory
 	fileName := filepath.Base(d.outPath)
 	partPath := filepath.Join(d.tempDir, fmt.Sprintf("%s.part.%d.%d", fileName, c.start, c.end))
@@ -1007,18 +1143,7 @@ func (d *HTTPDownloader) downloadChunk(idx int, c chunk) error {
 	// Update sourceURL to final URL after redirects (in case redirects happen during chunk download)
 	finalURL := resp.Request.URL.String()
 	if finalURL != d.sourceURL {
-		// Update sourceURL to use the redirected URL for future requests
-		d.multiConnectionMutex.Lock()
-		shouldLog := !d.multiConnectionFailed
-		d.multiConnectionMutex.Unlock()
-		
-		if shouldLog && d.reporter != nil {
-			d.reporter.Report(map[string]interface{}{
-				"type":    "http",
-				"status":  "info",
-				"message": fmt.Sprintf("Redirected during chunk download to: %s", finalURL),
-			})
-		}
+		// Update sourceURL silently (no UI log)
 		d.sourceURL = finalURL
 	}
 
@@ -1047,20 +1172,62 @@ func (d *HTTPDownloader) downloadChunk(idx int, c chunk) error {
 
 	buf := make([]byte, 65536)
 	lastUpdate := time.Now()
+	readCount := 0
+	consecutiveTimeouts := 0
+	maxConsecutiveTimeouts := 10 // Fail after 10 consecutive timeouts
+	lastProgressTime := time.Now()
 	
 	// Update progress with existing chunk size if resuming
 	if chunkDownloaded > 0 {
 		d.chunkMutex.Lock()
 		d.chunkProgress[idx] = chunkDownloaded
 		d.chunkMutex.Unlock()
+		lastProgressTime = time.Now()
+	}
+	
+	// Pre-allocate chunkProgress slice to avoid repeated allocations
+	chunkProgress := make([]map[string]interface{}, len(d.chunks))
+	
+	// Set a longer read deadline for the entire chunk download
+	// This prevents individual read operations from timing out on slow connections
+	// We'll use 2x the configured read timeout to allow for slow but steady progress
+	readDeadline := time.Now().Add(d.readTimeout * 2)
+	var tcpConn interface{ SetReadDeadline(time.Time) error }
+	if conn, ok := resp.Body.(interface{ SetReadDeadline(time.Time) error }); ok {
+		tcpConn = conn
+		tcpConn.SetReadDeadline(readDeadline)
 	}
 	
 	for {
+		readCount++
+		
+		// Extend read deadline periodically to prevent timeout on slow connections
+		if readCount%100 == 0 {
+			newDeadline := time.Now().Add(d.readTimeout * 2)
+			if tcpConn != nil {
+				tcpConn.SetReadDeadline(newDeadline)
+			}
+		}
+		
+		// Removed verbose memory logging - chunk progress is shown in status updates
+		
 		n, err := resp.Body.Read(buf)
 		if n > 0 {
+			// Reset timeout counter and update progress time on successful read
+			consecutiveTimeouts = 0
+			lastProgressTime = time.Now()
+			
 			written, writeErr := file.Write(buf[:n])
 			if writeErr != nil {
-				return writeErr
+				// Log error
+				if d.reporter != nil {
+					d.reporter.Report(map[string]interface{}{
+						"type":    "http",
+						"status":  "error",
+						"message": fmt.Sprintf("Part %d write error: %v", idx, writeErr),
+					})
+				}
+				return fmt.Errorf("chunk %d write error at %d bytes: %w", idx, chunkDownloaded, writeErr)
 			}
 			
 			chunkDownloaded += int64(written)
@@ -1072,17 +1239,19 @@ func (d *HTTPDownloader) downloadChunk(idx int, c chunk) error {
 			for i := range d.chunkProgress {
 				totalDownloaded += d.chunkProgress[i]
 			}
-			chunkProgress := make([]map[string]interface{}, len(d.chunks))
+			
+			// Reuse chunkProgress slice instead of allocating new one
 			for i := range d.chunks {
 				chunkSize := d.chunks[i].end - d.chunks[i].start + 1
-				chunkProgress[i] = map[string]interface{}{
-					"index":      i,
-					"start":      d.chunks[i].start,
-					"end":        d.chunks[i].end,
-					"progress":   float64(d.chunkProgress[i]) / float64(chunkSize),
-					"downloaded": d.chunkProgress[i],
-					"total":      chunkSize,
+				if chunkProgress[i] == nil {
+					chunkProgress[i] = make(map[string]interface{})
 				}
+				chunkProgress[i]["index"] = i
+				chunkProgress[i]["start"] = d.chunks[i].start
+				chunkProgress[i]["end"] = d.chunks[i].end
+				chunkProgress[i]["progress"] = float64(d.chunkProgress[i]) / float64(chunkSize)
+				chunkProgress[i]["downloaded"] = d.chunkProgress[i]
+				chunkProgress[i]["total"] = chunkSize
 			}
 			d.chunkMutex.Unlock()
 			
@@ -1091,6 +1260,8 @@ func (d *HTTPDownloader) downloadChunk(idx int, c chunk) error {
 			d.downloaded = totalDownloaded
 			downloaded := d.downloaded
 			d.downloadedMutex.Unlock()
+
+			// Removed verbose memory logging - chunk progress is shown in status updates
 
 			if d.reporter != nil && time.Since(lastUpdate) > 200*time.Millisecond {
 				// Ensure progress never exceeds 1.0
@@ -1143,17 +1314,99 @@ func (d *HTTPDownloader) downloadChunk(idx int, c chunk) error {
 			}
 		}
 		if err == io.EOF {
+			// Chunk completed - progress shown in status updates
 			break
 		}
 		if err != nil {
-			return err
+			// Check if it's a timeout error - these can be retried
+			errStr := err.Error()
+			isTimeout := strings.Contains(errStr, "timeout") || 
+			            strings.Contains(errStr, "deadline exceeded") ||
+			            strings.Contains(errStr, "context deadline exceeded") ||
+			            strings.Contains(errStr, "Client.Timeout") ||
+			            strings.Contains(errStr, "i/o timeout")
+			
+			// For timeout errors, track consecutive timeouts and progress
+			if isTimeout {
+				consecutiveTimeouts++
+				timeSinceProgress := time.Since(lastProgressTime)
+				
+				// If we've had too many consecutive timeouts or no progress for too long, fail the chunk
+				// This allows the retry mechanism to handle it at a higher level
+				if consecutiveTimeouts >= maxConsecutiveTimeouts || timeSinceProgress > d.readTimeout*3 {
+					// If multiple connections are being used and we're getting timeouts, 
+					// this might indicate the server is blocking multiple connections
+					if d.concurrency > 1 {
+						d.multiConnectionMutex.Lock()
+						d.multiConnectionFailed = true
+						d.multiConnectionMutex.Unlock()
+					}
+					
+					if d.reporter != nil {
+						d.reporter.Report(map[string]interface{}{
+							"type":    "http",
+							"status":  "error",
+							"message": fmt.Sprintf("Part %d: Too many timeouts, retrying...", idx),
+						})
+					}
+					// Close the response body and return error to trigger chunk retry
+					resp.Body.Close()
+					return fmt.Errorf("chunk %d: too many consecutive read timeouts (%d) or no progress for %v", 
+						idx, consecutiveTimeouts, timeSinceProgress)
+				}
+				
+				// Log warning but continue - the next read might succeed
+				if d.reporter != nil && consecutiveTimeouts <= 3 {
+					// Only log first few timeouts to avoid spam
+					var m runtime.MemStats
+					runtime.ReadMemStats(&m)
+					d.reporter.Report(map[string]interface{}{
+						"type":    "http",
+						"status":  "warning",
+						"message": fmt.Sprintf("Chunk %d read timeout at %d bytes (attempt %d/%d): %v",
+							idx, chunkDownloaded, consecutiveTimeouts, maxConsecutiveTimeouts, err),
+					})
+				}
+				
+				// Extend read deadline more aggressively when timeouts occur
+				if tcpConn != nil {
+					newDeadline := time.Now().Add(d.readTimeout * 3)
+					tcpConn.SetReadDeadline(newDeadline)
+				}
+				
+				time.Sleep(200 * time.Millisecond) // Brief pause before retrying
+				continue
+			}
+			
+			// Non-timeout errors: reset timeout counter and fail
+			consecutiveTimeouts = 0
+			
+			// Log error
+			if d.reporter != nil {
+				d.reporter.Report(map[string]interface{}{
+					"type":    "http",
+					"status":  "error",
+					"message": fmt.Sprintf("Part %d read error: %v", idx, err),
+				})
+			}
+			
+			return fmt.Errorf("chunk %d read error at %d bytes: %w", idx, chunkDownloaded, err)
 		}
 	}
 
 	// Verify chunk is complete
 	if chunkDownloaded != expectedChunkSize {
+		if d.reporter != nil {
+			d.reporter.Report(map[string]interface{}{
+				"type":    "http",
+				"status":  "error",
+				"message": fmt.Sprintf("Part %d incomplete: %d/%d bytes", idx, chunkDownloaded, expectedChunkSize),
+			})
+		}
 		return fmt.Errorf("chunk %d incomplete: downloaded %d of %d bytes", idx, chunkDownloaded, expectedChunkSize)
 	}
+	
+	// Chunk completed successfully - progress shown in status updates
 
 	return nil
 }

@@ -3,10 +3,25 @@ const path = require('node:path');
 const { spawn, exec } = require('node:child_process');
 const fs = require('node:fs');
 const os = require('node:os');
+const http = require('http');
 const { getDatabase } = require('./database');
+
+// Disable hardware acceleration to prevent GPU crashes
+// This must be called before app is ready
+app.disableHardwareAcceleration();
+
+// Additional command-line switches to force disable GPU
+// Electron 39.1.1 seems to need these even with disableHardwareAcceleration()
+app.commandLine.appendSwitch('disable-gpu');
+app.commandLine.appendSwitch('disable-gpu-compositing');
+app.commandLine.appendSwitch('disable-software-rasterizer');
 
 // Minimal startup logging
 console.log('Electron starting...');
+console.log('Process args:', process.argv);
+console.log('NODE_ENV:', process.env.NODE_ENV);
+console.log('isPackaged:', app.isPackaged);
+console.log('Hardware acceleration disabled');
 
 // Set app name explicitly
 app.setName('ACCELARA');
@@ -16,6 +31,160 @@ let downloadProcesses = new Map();
 let speedTestProcesses = new Map();
 let pendingArgs = null;
 let tray = null;
+let browserServer = null;
+const BROWSER_SERVER_PORT = 8765;
+
+// Go log file writer (dev mode only)
+let goLogFileStream = null;
+let goLogFilePath = null;
+
+// Initialize Go log file in dev mode
+function initGoLogFile() {
+  // In dev mode, app.isPackaged is false (when running with 'electron .')
+  // We don't need to check NODE_ENV - just check if packaged
+  const isDev = !app.isPackaged;
+  
+  console.log(`[Log Init] isDev: ${isDev}, isPackaged: ${app.isPackaged}, NODE_ENV: ${process.env.NODE_ENV}`);
+  
+  if (isDev) {
+    try {
+      const logDir = path.join(os.homedir(), '.accelara', 'logs');
+      console.log(`[Log Init] Creating log directory: ${logDir}`);
+      
+      if (!fs.existsSync(logDir)) {
+        fs.mkdirSync(logDir, { recursive: true });
+        console.log(`[Log Init] Log directory created`);
+      } else {
+        console.log(`[Log Init] Log directory already exists`);
+      }
+      
+      const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
+      goLogFilePath = path.join(logDir, `go-errors-${timestamp}.log`);
+      console.log(`[Log Init] Creating log file: ${goLogFilePath}`);
+      
+      goLogFileStream = fs.createWriteStream(goLogFilePath, { flags: 'a' });
+      
+      // Write header
+      const header = `\n${'='.repeat(80)}\n`;
+      const startMsg = `ACCELARA Go Error Log - Started: ${new Date().toISOString()}\n`;
+      goLogFileStream.write(header + startMsg + header + '\n');
+      
+      // Verify file was created
+      if (fs.existsSync(goLogFilePath)) {
+        console.log(`[Log Init] ✓ Log file verified at: ${goLogFilePath}`);
+      } else {
+        console.error(`[Log Init] ✗ Log file was not created at: ${goLogFilePath}`);
+      }
+      
+      console.log(`\n📝 Go error log file: ${goLogFilePath}`);
+      console.log(`   Tail with: tail -f "${goLogFilePath}"\n`);
+      console.log(`   Or use: ./scripts/tail-go-logs.sh\n`);
+    } catch (error) {
+      console.error('Failed to create Go log file:', error.message);
+      console.error('Error stack:', error.stack);
+    }
+  } else {
+    console.log('[Log Init] Not in dev mode, skipping log file creation');
+  }
+}
+
+// Safe console logging that handles EPIPE errors
+function safeConsoleLog(...args) {
+  try {
+    console.log(...args);
+  } catch (error) {
+    if (error.code !== 'EPIPE') {
+      // Only re-throw if it's not an EPIPE error
+      throw error;
+    }
+  }
+}
+
+function safeConsoleError(...args) {
+  try {
+    console.error(...args);
+  } catch (error) {
+    if (error.code !== 'EPIPE') {
+      // Only re-throw if it's not an EPIPE error
+      throw error;
+    }
+  }
+}
+
+function safeConsoleWarn(...args) {
+  try {
+    console.warn(...args);
+  } catch (error) {
+    if (error.code !== 'EPIPE') {
+      // Only re-throw if it's not an EPIPE error
+      throw error;
+    }
+  }
+}
+
+// Write to Go log file (dev mode only)
+function writeToGoLog(level, tag, message) {
+  if (goLogFileStream) {
+    try {
+      const timestamp = new Date().toISOString();
+      const logLine = `[${timestamp}] [${level}] [${tag}] ${message}\n`;
+      goLogFileStream.write(logLine);
+      // Note: Node.js WriteStream auto-flushes, but we can force it by writing empty string
+      // or just rely on the OS buffer flush (which happens frequently)
+    } catch (error) {
+      // Don't silently fail - log the error so we know logging is broken
+      safeConsoleError('Failed to write to Go log file:', error.message);
+      safeConsoleError('Log file path:', goLogFilePath);
+    }
+  } else {
+    // Log file not initialized - this shouldn't happen in dev mode
+    safeConsoleWarn(`[Log] Attempted to write log but log file not initialized. isDev check may have failed.`);
+  }
+}
+
+// Close Go log file on app exit
+function closeGoLogFile() {
+  if (goLogFileStream) {
+    try {
+      const footer = `\n${'='.repeat(80)}\n`;
+      const endMsg = `ACCELARA Go Error Log - Ended: ${new Date().toISOString()}\n`;
+      goLogFileStream.write(footer + endMsg + footer + '\n');
+      goLogFileStream.end();
+      goLogFileStream = null;
+    } catch (error) {
+      safeConsoleError('Failed to close Go log file:', error.message);
+    }
+  }
+}
+
+// Handle uncaught exceptions to prevent crashes (after safe console functions are defined)
+process.on('uncaughtException', (error) => {
+  try {
+    safeConsoleError('Uncaught Exception:', error.message);
+    safeConsoleError('Stack:', error.stack);
+  } catch {
+    // If we can't log, at least try to prevent crash
+    try {
+      console.error('Uncaught Exception (fallback):', error.message);
+    } catch {
+      // Last resort - ignore
+    }
+  }
+  // Don't exit - let Electron handle it gracefully
+});
+
+process.on('unhandledRejection', (reason, promise) => {
+  try {
+    safeConsoleError('Unhandled Rejection at:', promise);
+    safeConsoleError('Reason:', reason);
+  } catch {
+    try {
+      console.error('Unhandled Rejection (fallback):', reason);
+    } catch {
+      // Ignore
+    }
+  }
+});
 
 // Play completion sound notification
 function playCompletionSound() {
@@ -178,25 +347,114 @@ function setupWindowLoadHandlers(mainWindow, isDev) {
     const appPath = app.getAppPath();
     const filePath = path.join(appPath, 'dist', 'index.html');
     
-    mainWindow.loadFile(filePath).catch(err => {
-      try {
-        console.error('Error loading file:', err);
-        // Fallback: try relative path from __dirname
-        const fallbackPath = path.join(__dirname, '../dist/index.html');
-        mainWindow.loadFile(fallbackPath).catch(fallbackErr => {
-          console.error('Failed to load fallback path:', fallbackErr);
+    console.log('[Production] Loading file from:', filePath);
+    console.log('[Production] app.getAppPath():', appPath);
+    
+    // loadFile should work with asar files - use the full path
+    // Electron's loadFile automatically handles asar archives
+    console.log('[Production] Attempting to load file from asar...');
+    console.log('[Production] Full file path:', filePath);
+    
+    // Use loadFile - it should handle asar paths automatically
+    // app.getAppPath() returns the asar path, so filePath should work
+    mainWindow.loadFile(filePath).then(() => {
+      console.log('[Production] File loaded successfully');
+    }).catch(err => {
+      safeConsoleError('[Production] Error loading file:', err.message);
+      safeConsoleError('[Production] Error code:', err.code);
+      
+      // Fallback: try using path relative to app.asar
+      const asarPath = path.join(process.resourcesPath, 'app.asar', 'dist', 'index.html');
+      console.log('[Production] Trying fallback path:', asarPath);
+      console.log('[Production] Fallback path exists?', fs.existsSync(asarPath));
+      
+      if (fs.existsSync(asarPath)) {
+        mainWindow.loadFile(asarPath).then(() => {
+          console.log('[Production] File loaded successfully from asar path');
+        }).catch(fallbackErr => {
+          safeConsoleError('[Production] Fallback also failed:', fallbackErr.message);
+          // Show window anyway so user can see there's an issue
+          if (mainWindow && !mainWindow.isDestroyed()) {
+            mainWindow.show();
+          }
         });
-      } catch (logError) {
-        if (logError.code !== 'EPIPE') {
-          // Only log if it's not an EPIPE error
+      } else {
+        safeConsoleError('[Production] Fallback path does not exist');
+        // Show window anyway
+        if (mainWindow && !mainWindow.isDestroyed()) {
+          mainWindow.show();
         }
       }
     });
     
+    // Add error handlers for web contents
+    mainWindow.webContents.on('did-fail-load', (event, errorCode, errorDescription, validatedURL, isMainFrame) => {
+      console.error('[Production] Failed to load:', {
+        errorCode,
+        errorDescription,
+        validatedURL,
+        isMainFrame
+      });
+      mainWindow.show(); // Show window even if load failed
+    });
+    
+    mainWindow.webContents.on('did-finish-load', () => {
+      console.log('[Production] Page finished loading');
+      // Ensure window is shown after page loads
+      if (!mainWindow.isVisible()) {
+        console.log('[Production] Window not visible after load, showing');
+        mainWindow.show();
+      }
+    });
+    
+    // Log console messages from renderer
+    mainWindow.webContents.on('console-message', (event, level, message, line, sourceId) => {
+      console.log(`[Renderer ${level}]:`, message);
+    });
+    
+    // Log any uncaught exceptions in renderer
+    mainWindow.webContents.on('unresponsive', () => {
+      console.error('[Production] Renderer process became unresponsive');
+    });
+    
+    mainWindow.webContents.on('crashed', (event, killed) => {
+      console.error('[Production] Renderer process crashed, killed:', killed);
+    });
+    
     mainWindow.once('ready-to-show', () => {
-      console.log('Window ready to show');
+      console.log('[Production] Window ready to show - showing window');
+      // Show window first
       mainWindow.show();
+      
+      // Ensure window is actually visible
+      if (!mainWindow.isVisible()) {
+        console.log('[Production] Window not visible, forcing show');
+        mainWindow.show();
+      }
+      
+      // Bring to front and focus
+      if (process.platform === 'darwin') {
+        app.dock.show();
+        // Use macOS-specific methods to bring window to front
+        mainWindow.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true });
+        mainWindow.setVisibleOnAllWorkspaces(false);
+      }
+      
       mainWindow.focus();
+      mainWindow.moveTop();
+      mainWindow.setAlwaysOnTop(true);
+      mainWindow.setAlwaysOnTop(false);
+      
+      console.log('[Production] Window shown, visible:', mainWindow.isVisible(), 'focused:', mainWindow.isFocused());
+    });
+    
+    // Also show on window focus
+    mainWindow.on('focus', () => {
+      console.log('[Production] Window focused');
+    });
+    
+    mainWindow.on('blur', () => {
+      console.log('[Production] Window blurred');
     });
   }
 }
@@ -464,18 +722,165 @@ async function gracefulShutdown() {
   downloadProcesses.clear();
 }
 
+// Helper function to move completed download to history
+async function moveToHistory(downloadId, forceDelete = false) {
+  try {
+    const database = await getDatabase();
+    const download = database.prepare('SELECT * FROM downloads WHERE id = ?').get(downloadId);
+    if (download) {
+      // Check if it's a seeding torrent - if so, don't delete from downloads
+      const isSeeding = download.status === 'seeding' || 
+                       (download.type === 'torrent' && download.status === 'completed');
+      
+      // Get actual file size if available
+      let fileSize = download.total || download.downloaded || 0;
+      try {
+        // Try to get actual file size from filesystem
+        if (download.output && fs.existsSync(download.output)) {
+          const stats = fs.statSync(download.output);
+          if (stats.isFile()) {
+            fileSize = stats.size;
+          } else if (stats.isDirectory()) {
+            // For directories (torrents), calculate total size
+            let totalSize = 0;
+            const calculateDirSize = (dir) => {
+              const entries = fs.readdirSync(dir, { withFileTypes: true });
+              for (const entry of entries) {
+                const fullPath = path.join(dir, entry.name);
+                if (entry.isDirectory()) {
+                  calculateDirSize(fullPath);
+                } else {
+                  try {
+                    totalSize += fs.statSync(fullPath).size;
+                  } catch {
+                    // Ignore errors
+                  }
+                }
+              }
+            };
+            calculateDirSize(download.output);
+            fileSize = totalSize || download.total || download.downloaded || 0;
+          }
+        }
+      } catch {
+        // If file doesn't exist or can't be accessed, use database values
+        fileSize = download.total || download.downloaded || 0;
+      }
+      
+      // Add to history
+      const insertHistory = database.prepare(`
+        INSERT OR REPLACE INTO download_history (id, source, output, type, size, completed_at, metadata)
+        VALUES (?, ?, ?, ?, ?, ?, ?)
+      `);
+      insertHistory.run(
+        downloadId,
+        download.source,
+        download.output,
+        download.type,
+        fileSize,
+        Date.now(),
+        download.metadata || ''
+      );
+      
+      // Only delete from downloads if not seeding (or if forceDelete is true)
+      if (forceDelete || !isSeeding) {
+        database.prepare('DELETE FROM downloads WHERE id = ?').run(downloadId);
+      } else {
+        // Update status to seeding if not already
+        if (download.status !== 'seeding') {
+          database.prepare('UPDATE downloads SET status = ? WHERE id = ?').run('seeding', downloadId);
+        }
+      }
+    }
+  } catch (error) {
+    try {
+      console.error('Error moving download to history:', error.message);
+    } catch (logError) {
+      // Ignore EPIPE errors from console - this is intentional
+      if (logError.code !== 'EPIPE') {
+        // Only log if it's not an EPIPE error
+      }
+    }
+  }
+}
+
 // Helper function to setup process handlers for a restarted download
 function setupRestartedDownloadHandlers(proc, downloadId, metadata, download) {
   let isProcessActive = true;
+  
+  // Buffer for incomplete JSON lines (for restarted downloads)
+  let restartedStdoutBuffer = '';
   
   proc.stdout.on('data', async (data) => {
     if (!isProcessActive) return;
     
     try {
-      const line = data.toString().trim();
-      if (line.startsWith('{')) {
-        const status = JSON.parse(line);
-        await processStatusUpdate(status, downloadId);
+      // Add new data to buffer
+      restartedStdoutBuffer += data.toString();
+      
+      // Try to extract complete JSON objects from buffer
+      const lines = restartedStdoutBuffer.split('\n');
+      // Keep the last line in buffer (might be incomplete)
+      restartedStdoutBuffer = lines.pop() || '';
+      
+      for (const line of lines) {
+        const trimmed = line.trim();
+        if (!trimmed) continue;
+        
+        // Try to find and parse JSON objects (same logic as main download handler)
+        let remaining = trimmed;
+        while (remaining.length > 0) {
+          const jsonStart = remaining.indexOf('{');
+          if (jsonStart === -1) break;
+          
+          // Find matching closing brace
+          let jsonEnd = -1;
+          let braceCount = 0;
+          let inString = false;
+          let escapeNext = false;
+          
+          for (let i = jsonStart; i < remaining.length; i++) {
+            const char = remaining[i];
+            if (escapeNext) {
+              escapeNext = false;
+              continue;
+            }
+            if (char === '\\') {
+              escapeNext = true;
+              continue;
+            }
+            if (char === '"') {
+              inString = !inString;
+              continue;
+            }
+            if (!inString) {
+              if (char === '{') braceCount++;
+              else if (char === '}') {
+                braceCount--;
+                if (braceCount === 0) {
+                  jsonEnd = i + 1;
+                  break;
+                }
+              }
+            }
+          }
+          
+          if (jsonEnd > jsonStart) {
+            try {
+              const jsonStr = remaining.substring(jsonStart, jsonEnd);
+              const status = JSON.parse(jsonStr);
+              await processStatusUpdate(status, downloadId);
+              remaining = remaining.substring(jsonEnd).trim();
+            } catch (parseError) {
+              restartedStdoutBuffer = remaining + '\n' + restartedStdoutBuffer;
+              console.debug('Failed to parse status update:', parseError.message);
+              break;
+            }
+          } else {
+            restartedStdoutBuffer = remaining + '\n' + restartedStdoutBuffer;
+            break;
+          }
+        }
       }
     } catch (error) {
       if (isProcessActive) {
@@ -490,24 +895,31 @@ function setupRestartedDownloadHandlers(proc, downloadId, metadata, download) {
     }
   });
   
-  proc.stderr.on('data', (data) => {
-    if (!isProcessActive) return;
-    try {
-      const errorMsg = data.toString().trim();
-      if (errorMsg) {
-        console.error(`Go error: ${errorMsg}`);
+    proc.stderr.on('data', (data) => {
+      if (!isProcessActive) return;
+      try {
+        const lines = data.toString().split('\n').filter(line => line.trim());
+        for (const errorMsg of lines) {
+          if (errorMsg) {
+            safeConsoleError(`═══════════════════════════════════════════════════════════`);
+            safeConsoleError(`[${downloadId}] Go Error (Restarted Download):`);
+            safeConsoleError(`  ${errorMsg}`);
+            safeConsoleError(`═══════════════════════════════════════════════════════════`);
+            writeToGoLog('ERROR', downloadId, `(restarted) ${errorMsg}`);
+          }
+        }
+      } catch (error) {
+        if (error.code !== 'EPIPE') {
+          safeConsoleError(`[${downloadId}] Error processing stderr:`, error.message);
+          writeToGoLog('ERROR', downloadId, `Error processing stderr: ${error.message}`);
+        }
       }
-    } catch (error) {
-      if (error.code !== 'EPIPE') {
-        // Only log if it's not an EPIPE error
-      }
-    }
-  });
+    });
   
   proc.on('error', (error) => {
     isProcessActive = false;
     try {
-      console.error(`Failed to restart Go process: ${error.message}`);
+      safeConsoleError(`Failed to restart Go process: ${error.message}`);
     } catch (logError) {
       if (logError.code !== 'EPIPE') {
         // Only log if it's not an EPIPE error
@@ -527,8 +939,13 @@ function setupRestartedDownloadHandlers(proc, downloadId, metadata, download) {
     const downloadStatus = db.prepare('SELECT status FROM downloads WHERE id = ?').get(downloadId);
     
     if (code === 0 && downloadStatus && downloadStatus.status !== 'paused') {
+      // Check if this is a seeding torrent
+      const isSeedingTorrent = downloadStatus.type === 'torrent' && 
+                               (downloadStatus.status === 'seeding' || downloadStatus.status === 'completed');
+      
       playCompletionSound();
-      await moveToHistory(downloadId);
+      // For seeding torrents, add to history but keep in downloads
+      await moveToHistory(downloadId, !isSeedingTorrent);
       notifyDownloadComplete(downloadId, code, download.output);
     } else if (downloadStatus && downloadStatus.status === 'paused') {
       // Download was paused - don't complete, just notify
@@ -547,11 +964,17 @@ function setupRestartedDownloadHandlers(proc, downloadId, metadata, download) {
   
   // Send initial state to renderer
   if (mainWindow && !mainWindow.isDestroyed()) {
+    // For torrents, if progress is 100% or status is seeding, ensure status is 'seeding'
+    let initialStatus = download.status || 'downloading';
+    if (download.type === 'torrent' && (download.progress >= 1.0 || download.progress === 1 || download.status === 'seeding')) {
+      initialStatus = 'seeding';
+    }
+    
     mainWindow.webContents.send('download-update', {
       downloadId: download.id,
       download_id: download.id,
       ...metadata,
-      status: download.status || 'downloading',
+      status: initialStatus,
       progress: download.progress || 0,
       downloaded: download.downloaded || 0,
       total: download.total || 0,
@@ -564,9 +987,11 @@ function setupRestartedDownloadHandlers(proc, downloadId, metadata, download) {
 async function reattachToDownloads() {
   try {
     const db = await getDatabase();
+    // Get active downloads, including failed HTTP downloads and error-status downloads (they can be resumed or viewed)
     const activeDownloads = db.prepare(`
       SELECT * FROM downloads 
-      WHERE status NOT IN ('completed', 'failed', 'cancelled')
+      WHERE status NOT IN ('completed', 'cancelled')
+      AND (status != 'failed' OR type = 'http' OR status = 'error')
       ORDER BY started_at DESC
     `).all();
     
@@ -587,41 +1012,66 @@ async function reattachToDownloads() {
           const metadata = download.metadata ? JSON.parse(download.metadata) : {};
           const options = metadata.options || {};
           
-          // All downloads should be paused on startup (enforced by gracefulShutdown)
-          // If status is not paused, mark it as paused (safety check)
-          if (download.status !== 'paused') {
+          // Mark all downloads as paused on app restart (except completed/cancelled)
+          // Clear errors on restart - they should be cleared if resolved
+          if (download.status !== 'paused' && download.status !== 'completed' && download.status !== 'cancelled') {
             const pausedMetadata = {
               ...metadata,
               pause_reason: 'Paused on app exit',
               paused_at: Date.now(),
               options: metadata.options || {},
+              // Clear error-related fields on restart
+              error: null,
+              last_error: null,
+              error_time: null,
             };
             
             db.prepare(`
               UPDATE downloads 
-              SET status = ?, metadata = ?
+              SET status = ?, metadata = ?, error = NULL
               WHERE id = ?
             `).run('paused', JSON.stringify(pausedMetadata), download.id);
             
             download.status = 'paused';
+            download.error = null;
             metadata = pausedMetadata;
+          } else if (download.status === 'paused') {
+            // Even if already paused, clear errors on restart
+            const clearedMetadata = {
+              ...metadata,
+              error: null,
+              last_error: null,
+              error_time: null,
+            };
+            
+            db.prepare(`
+              UPDATE downloads 
+              SET metadata = ?, error = NULL
+              WHERE id = ?
+            `).run(JSON.stringify(clearedMetadata), download.id);
+            
+            metadata = clearedMetadata;
+            download.error = null;
           }
           
-          // Send paused download state to UI (don't auto-resume)
+          // Send download state to UI (errors cleared on restart)
           if (mainWindow && !mainWindow.isDestroyed()) {
-            // Send complete paused download state to UI
+            // Send complete download state to UI
             mainWindow.webContents.send('download-update', {
               downloadId: download.id,
               download_id: download.id,
               source: download.source,
               output: download.output,
               type: download.type,
-              status: 'paused',
+              status: download.status, // Should be 'paused' for all non-completed downloads
               progress: download.progress || 0,
               downloaded: download.downloaded || 0,
               total: download.total || 0,
               speed: download.speed || 0,
-              pause_reason: metadata.pause_reason || 'Paused on app exit',
+              error: null, // Clear errors on restart
+              message: null, // Clear messages on restart
+              messages: [], // Clear messages array on restart
+              pause_reason: metadata.pause_reason || (download.status === 'paused' ? 'Paused on app exit' : undefined),
               // Include all metadata fields for complete state restoration
               ...metadata,
               // Preserve torrent-specific fields if present
@@ -649,8 +1099,10 @@ async function reattachToDownloads() {
 
 // Handle protocol and file arguments
 const gotTheLock = app.requestSingleInstanceLock();
+console.log('[App Init] Single instance lock:', gotTheLock);
 
 if (gotTheLock) {
+  console.log('[App Init] Got lock, setting up app...');
   app.on('second-instance', (event, commandLine, workingDirectory) => {
     // Someone tried to run a second instance, focus our window instead
     if (mainWindow) {
@@ -735,10 +1187,24 @@ function setDockIcon(isDev) {
 
   // eslint-disable-next-line unicorn/prefer-top-level-await
   app.whenReady().then(() => {
-    const isDev = !app.isPackaged && (process.env.NODE_ENV === 'development' || !process.env.NODE_ENV);
+    console.log('[App Ready] Promise resolved!');
+    // In dev mode, app.isPackaged is false (when running with 'electron .')
+    const isDev = !app.isPackaged;
+    
+    console.log('[App Ready] Initializing...');
+    console.log('[App Ready] isPackaged:', app.isPackaged);
+    console.log('[App Ready] NODE_ENV:', process.env.NODE_ENV);
+    console.log('[App Ready] isDev:', isDev);
+    
+    // Initialize Go log file in dev mode
+    initGoLogFile();
+    
     setDockIcon(isDev);
     
     createWindow();
+    
+    // Start browser integration server
+    startBrowserServer();
 
     // Reattach to existing downloads from database (wait for window to be ready)
     setTimeout(() => {
@@ -780,8 +1246,12 @@ function setDockIcon(isDev) {
         createWindow();
       }
     });
+  }).catch((error) => {
+    console.error('[App Ready] Error in whenReady promise:', error);
+    console.error('[App Ready] Error stack:', error.stack);
   });
 } else {
+  console.log('[App Init] Another instance is running, quitting...');
   app.quit();
 }
 
@@ -852,6 +1322,9 @@ function handleTorrentFile(filePath) {
 app.on('before-quit', async (event) => {
   // Pause all active downloads before quitting
   await gracefulShutdown();
+  
+  // Close Go log file
+  closeGoLogFile();
 });
 
 app.on('window-all-closed', () => {
@@ -872,6 +1345,13 @@ app.on('window-all-closed', () => {
         createTrayIcon();
       }
       return;
+    }
+    // Stop browser server on quit
+    if (browserServer) {
+      browserServer.close(() => {
+        console.log('Browser integration server stopped');
+      });
+      browserServer = null;
     }
     
     // Normal quit behavior (downloads already paused by before-quit handler)
@@ -930,14 +1410,14 @@ ipcMain.handle('inspect-torrent', async (event, source) => {
     });
     
     proc.on('error', (error) => {
-      console.error('=== spawn error ===');
-      console.error('Error code:', error.code);
-      console.error('Error message:', error.message);
-      console.error('Binary path used:', goBinary);
-      console.error('Path exists?', fs.existsSync(goBinary));
+      safeConsoleError('=== spawn error ===');
+      safeConsoleError('Error code:', error.code);
+      safeConsoleError('Error message:', error.message);
+      safeConsoleError('Binary path used:', goBinary);
+      safeConsoleError('Path exists?', fs.existsSync(goBinary));
       if (fs.existsSync(goBinary)) {
         const stats = fs.statSync(goBinary);
-        console.error('Path stats:', {
+        safeConsoleError('Path stats:', {
           isFile: stats.isFile(),
           isDirectory: stats.isDirectory(),
           mode: stats.mode.toString(8),
@@ -955,6 +1435,14 @@ ipcMain.handle('inspect-torrent', async (event, source) => {
     });
 
     proc.stderr.on('data', (data) => {
+      const errorMsg = data.toString().trim();
+      if (errorMsg) {
+        safeConsoleError(`═══════════════════════════════════════════════════════════`);
+        safeConsoleError(`[inspect-torrent] Go Error:`);
+        safeConsoleError(`  ${errorMsg}`);
+        safeConsoleError(`═══════════════════════════════════════════════════════════`);
+        writeToGoLog('ERROR', 'inspect-torrent', errorMsg);
+      }
       stderr += data.toString();
     });
 
@@ -1426,11 +1914,22 @@ async function processStatusUpdate(status, downloadId) {
   const database = await getDatabase();
   
   // Check current status in database - if paused, don't allow status updates to change it
-  const currentDownload = database.prepare('SELECT status FROM downloads WHERE id = ?').get(downloadId);
+  const currentDownload = database.prepare('SELECT status, metadata FROM downloads WHERE id = ?').get(downloadId);
   if (currentDownload && currentDownload.status === 'paused') {
-    // Download is paused - only allow updates that explicitly set status to paused
-    // Ignore any other status updates (they shouldn't happen, but protect against them)
-    if (status.status !== 'paused') {
+    // Download is paused - check if it was auto-paused due to error
+    let isAutoPaused = false;
+    if (currentDownload.metadata) {
+      try {
+        const metadata = JSON.parse(currentDownload.metadata);
+        isAutoPaused = metadata.auto_paused === true;
+      } catch {
+        // Ignore parse errors
+      }
+    }
+    
+    // If auto-paused, don't allow any status updates to override it (user must manually resume)
+    // If manually paused, only allow updates that explicitly set status to paused
+    if (isAutoPaused || status.status !== 'paused') {
       // Silently ignore status updates for paused downloads
       return;
     }
@@ -1481,11 +1980,78 @@ async function processStatusUpdate(status, downloadId) {
     return; // Don't process further - download is paused
   }
   
+  // If status is seeding (torrent completed), add to history but keep in downloads
+  if (status.status === 'seeding' || (status.type === 'torrent' && status.progress >= 1.0)) {
+    const download = database.prepare('SELECT * FROM downloads WHERE id = ?').get(downloadId);
+    if (download) {
+      // Check if already in history
+      const existingHistory = database.prepare('SELECT * FROM download_history WHERE id = ?').get(downloadId);
+      if (!existingHistory) {
+        // Add to history but keep in downloads table
+        const insertHistory = database.prepare(`
+          INSERT OR REPLACE INTO download_history (id, source, output, type, size, completed_at, metadata)
+          VALUES (?, ?, ?, ?, ?, ?, ?)
+        `);
+        insertHistory.run(
+          downloadId,
+          download.source,
+          download.output,
+          download.type,
+          download.downloaded || download.total || 0,
+          Date.now(),
+          download.metadata || ''
+        );
+      }
+    }
+  }
+  
   const updatedMetadata = {
     ...existingMetadata,
     ...status,
     options: existingMetadata.options || {},
   };
+  
+  // Store error and info messages in metadata
+  if (status.message) {
+    if (!updatedMetadata.messages) {
+      updatedMetadata.messages = [];
+    }
+    const messageType = status.status === 'error' ? 'error' : (status.status === 'info' ? 'info' : 'message');
+    updatedMetadata.messages.push({
+      time: Date.now(),
+      type: messageType,
+      text: status.message
+    });
+    // Keep only last 20 messages
+    if (updatedMetadata.messages.length > 20) {
+      updatedMetadata.messages = updatedMetadata.messages.slice(-20);
+    }
+  }
+  
+  // Determine the correct status
+  // For torrents at 100%, force status to "seeding" if not already paused
+  let finalStatus = status.status || 'downloading';
+  
+  // Check if torrent is already seeding in database - preserve that status
+  const currentStatus = database.prepare('SELECT status FROM downloads WHERE id = ?').get(downloadId);
+  const isAlreadySeeding = currentStatus && currentStatus.status === 'seeding';
+  
+  if (status.type === 'torrent') {
+    // If torrent is already seeding, preserve that status unless explicitly changed
+    if (isAlreadySeeding && status.status !== 'paused' && status.status !== 'failed') {
+      finalStatus = 'seeding';
+    } else if (status.status === 'seeding' || status.progress >= 1.0 || status.progress === 1) {
+      // Torrent is complete - should be seeding (either explicit status or 100% progress)
+      finalStatus = 'seeding';
+    }
+  }
+  
+  // For info/error status updates, don't change the main status if download is active
+  // Exception: if torrent is seeding, preserve seeding status
+  if (status.status === 'info' && finalStatus === 'downloading' && !isAlreadySeeding) {
+    // Keep downloading status, just update metadata
+    finalStatus = existingDownload ? (existingDownload.status === 'paused' ? 'paused' : 'downloading') : 'downloading';
+  }
   
   const updateDownload = database.prepare(`
     UPDATE downloads 
@@ -1493,7 +2059,7 @@ async function processStatusUpdate(status, downloadId) {
     WHERE id = ?
   `);
   updateDownload.run(
-    status.status || 'downloading',
+    finalStatus,
     status.progress || 0,
     status.downloaded || 0,
     status.total || 0,
@@ -1504,6 +2070,9 @@ async function processStatusUpdate(status, downloadId) {
   
   storeTorrentState(database, status, downloadId);
   storeHttpState(database, status, downloadId);
+  
+  // Update the status in updateData to reflect the final status
+  updateData.status = finalStatus;
   
   if (mainWindow && !mainWindow.isDestroyed()) {
     mainWindow.webContents.send('download-update', updateData);
@@ -1532,17 +2101,19 @@ ipcMain.handle('start-download', async (event, { source, output, options }) => {
     // Reuse existing download ID
     downloadId = existingDownload.id;
     
-    // Update existing download to initializing status
+    // Update existing download to paused status (don't auto-start)
     const existingMetadata = existingDownload.metadata ? JSON.parse(existingDownload.metadata) : {};
     const updatedMetadata = {
       ...existingMetadata,
       options: options || existingMetadata.options || {},
       type: downloadType,
+      pause_reason: 'Paused - click resume to start',
+      paused_at: Date.now(),
     };
     
     db.prepare(`
       UPDATE downloads 
-      SET status = 'initializing', started_at = ?, metadata = ?
+      SET status = 'paused', started_at = ?, metadata = ?, error = NULL
       WHERE id = ?
     `).run(Date.now(), JSON.stringify(updatedMetadata), downloadId);
     
@@ -1572,232 +2143,81 @@ ipcMain.handle('start-download', async (event, { source, output, options }) => {
     
     const insertDownload = db.prepare(`
       INSERT OR REPLACE INTO downloads (id, source, output, type, status, started_at, metadata)
-      VALUES (?, ?, ?, ?, 'initializing', ?, ?)
+      VALUES (?, ?, ?, ?, 'paused', ?, ?)
     `);
+    
+    // Set pause reason for new downloads
+    initialMetadata.pause_reason = 'Paused - click resume to start';
+    initialMetadata.paused_at = Date.now();
+    
     insertDownload.run(downloadId, source, outputPath, downloadType, Date.now(), JSON.stringify(initialMetadata));
   }
   
   // Ensure output directory exists
-  if (!fs.existsSync(outputPath)) {
-    fs.mkdirSync(outputPath, { recursive: true });
-  }
-  
-  const args = buildCommandArgs(source, outputPath, downloadId, options);
-  
-  const foundBinary = findGoBinary();
-  const goBinary = verifyAndNormalizeBinary(foundBinary);
-
-  // For cwd, we need a real directory, not inside ASAR
-  let workingDir;
-  if (app.isPackaged) {
-    workingDir = os.homedir();
+  // For HTTP downloads, outputPath should ALWAYS be treated as a file path
+  // (unless it explicitly ends with a path separator)
+  // For torrent downloads, outputPath can be a directory
+  if (downloadType === 'http') {
+    // HTTP downloads are always files - create parent directory only
+    const parentDir = path.dirname(outputPath);
+    if (!fs.existsSync(parentDir)) {
+      fs.mkdirSync(parentDir, { recursive: true });
+    }
   } else {
-    workingDir = path.join(__dirname, '..');
-  }
-  
-  const proc = spawn(goBinary, args, {
-    cwd: workingDir,
-    env: { ...process.env }
-  });
-  
-  proc.on('error', async (error) => {
-    console.error('=== spawn error ===');
-    console.error('Error code:', error.code);
-    console.error('Error message:', error.message);
-    console.error('Error stack:', error.stack);
-    console.error('Binary path used:', goBinary);
-    console.error('Path exists?', fs.existsSync(goBinary));
-    if (fs.existsSync(goBinary)) {
-      const stats = fs.statSync(goBinary);
-      console.error('Path stats:', {
-        isFile: stats.isFile(),
-        isDirectory: stats.isDirectory(),
-        mode: stats.mode.toString(8),
-        size: stats.size
-      });
-    }
-    console.error('Working directory:', workingDir);
-    console.error('Working directory exists?', fs.existsSync(workingDir));
-    console.error('Arguments:', args);
-    
-    // Update download status to failed
+    // For torrents, check if it's a file or directory
     try {
-      const db = await getDatabase();
-      const updateStatus = db.prepare('UPDATE downloads SET status = ?, error = ? WHERE id = ?');
-      updateStatus.run('failed', error.message, downloadId);
-      
-      // Notify renderer
-      if (mainWindow && !mainWindow.isDestroyed()) {
-        mainWindow.webContents.send('download-update', {
-          downloadId,
-          status: 'failed',
-          error: error.message,
-        });
-      }
-    } catch (dbError) {
-      console.error('Failed to update database:', dbError.message);
-    }
-  });
-
-  downloadProcesses.set(downloadId, proc);
-
-  let isProcessActive = true;
-
-  proc.stdout.on('data', async (data) => {
-    if (!isProcessActive) return;
-    
-    try {
-      const line = data.toString().trim();
-      if (line) {
-        if (line.startsWith('{')) {
-          try {
-            const status = JSON.parse(line);
-            await processStatusUpdate(status, downloadId);
-          } catch (parseError) {
-            console.warn(`[${downloadId}] Failed to parse JSON status:`, parseError.message);
-            console.warn(`[${downloadId}] Raw line:`, line);
-          }
+      const outputStat = fs.statSync(outputPath);
+      if (!outputStat.isDirectory()) {
+        // It's a file, create parent directory
+        const parentDir = path.dirname(outputPath);
+        if (!fs.existsSync(parentDir)) {
+          fs.mkdirSync(parentDir, { recursive: true });
         }
       }
-    } catch (error) {
-      if (isProcessActive) {
-        console.error(`[${downloadId}] Error processing stdout:`, error.message);
-        console.error(`[${downloadId}] Error stack:`, error.stack);
-      }
-    }
-  });
-
-  proc.stderr.on('data', (data) => {
-    if (!isProcessActive) return;
-    
-    try {
-      const errorMsg = data.toString().trim();
-      if (errorMsg) {
-        console.error(`Go stderr: ${errorMsg}`);
-        // Also send to renderer for user feedback
-        if (mainWindow && !mainWindow.isDestroyed()) {
-          mainWindow.webContents.send('download-update', {
-            downloadId,
-            error: errorMsg,
-          });
+    } catch {
+      // Path doesn't exist - check if it looks like a directory
+      // Only treat as directory if it ends with path separator
+      const isDirectory = outputPath.endsWith(path.sep) || outputPath.endsWith('/');
+      if (isDirectory) {
+        // Explicitly a directory - create it
+        if (!fs.existsSync(outputPath)) {
+          fs.mkdirSync(outputPath, { recursive: true });
         }
-      }
-    } catch (error) {
-      // Ignore EPIPE errors from console - this is intentional
-      if (error.code !== 'EPIPE') {
-        console.error('Error processing stderr:', error.message);
-      }
-    }
-  });
-
-  proc.on('error', async (error) => {
-    isProcessActive = false;
-    console.error(`[${downloadId}] Failed to start Go process:`, error.message);
-    console.error(`[${downloadId}] Error code:`, error.code);
-    console.error(`[${downloadId}] Error stack:`, error.stack);
-    
-    // Update database
-    try {
-      const db = await getDatabase();
-      const updateStatus = db.prepare('UPDATE downloads SET status = ?, error = ? WHERE id = ?');
-      updateStatus.run('failed', error.message, downloadId);
-      
-      // Notify renderer
-      if (mainWindow && !mainWindow.isDestroyed()) {
-        mainWindow.webContents.send('download-update', {
-          downloadId,
-          status: 'failed',
-          error: error.message,
-        });
-      }
-    } catch (dbError) {
-      console.error(`[${downloadId}] Failed to update database:`, dbError.message);
-    }
-    
-    downloadProcesses.delete(downloadId);
-  });
-
-  // Helper function to move completed download to history
-  async function moveToHistory(downloadId) {
-    try {
-      const database = await getDatabase();
-      const download = database.prepare('SELECT * FROM downloads WHERE id = ?').get(downloadId);
-      if (download) {
-        const insertHistory = database.prepare(`
-          INSERT OR REPLACE INTO download_history (id, source, output, type, size, completed_at, metadata)
-          VALUES (?, ?, ?, ?, ?, ?, ?)
-        `);
-        insertHistory.run(
-          downloadId,
-          download.source,
-          download.output,
-          download.type,
-          download.downloaded || download.total || 0,
-          Date.now(),
-          download.metadata || ''
-        );
-        database.prepare('DELETE FROM downloads WHERE id = ?').run(downloadId);
-      }
-    } catch (error) {
-      try {
-        console.error('Error moving download to history:', error.message);
-      } catch (logError) {
-        // Ignore EPIPE errors from console - this is intentional
-        if (logError.code !== 'EPIPE') {
-          // Only log if it's not an EPIPE error
+      } else {
+        // Assume it's a file - create parent directory
+        const parentDir = path.dirname(outputPath);
+        if (!fs.existsSync(parentDir)) {
+          fs.mkdirSync(parentDir, { recursive: true });
         }
       }
     }
   }
-
-  proc.on('close', async (code, signal) => {
-    isProcessActive = false;
-    console.log(`[${downloadId}] Process closed with code ${code}${signal ? ` and signal ${signal}` : ''}`);
+  
+  // Don't start the download immediately - it should be paused
+  // The download will only start when user clicks resume
+  // Notify UI that download was created in paused state
+  if (mainWindow && !mainWindow.isDestroyed()) {
+    const db = await getDatabase();
+    const download = db.prepare('SELECT * FROM downloads WHERE id = ?').get(downloadId);
+    const metadata = download.metadata ? JSON.parse(download.metadata) : {};
     
-    if (code !== 0) {
-      console.error(`[${downloadId}] Process exited with non-zero code: ${code}`);
-      console.error(`[${downloadId}] Signal: ${signal || 'none'}`);
-      console.error(`[${downloadId}] This usually indicates the Go process encountered an error`);
-      
-      // Update database with error
-      try {
-        const db = await getDatabase();
-        const errorMsg = signal ? `Process killed by signal: ${signal}` : `Process exited with code: ${code}`;
-        const updateStatus = db.prepare('UPDATE downloads SET status = ?, error = ? WHERE id = ?');
-        updateStatus.run('failed', errorMsg, downloadId);
-        
-        // Notify renderer
-        if (mainWindow && !mainWindow.isDestroyed()) {
-          mainWindow.webContents.send('download-update', {
-            downloadId,
-            status: 'failed',
-            code,
-            signal,
-            error: errorMsg,
-          });
-        }
-      } catch (dbError) {
-        console.error(`[${downloadId}] Failed to update database:`, dbError.message);
-      }
-    }
-    
-    downloadProcesses.delete(downloadId);
-    
-    // Remove event listeners to prevent further writes
-    proc.stdout.removeAllListeners('data');
-    proc.stderr.removeAllListeners('data');
-    
-    // Move to history on completion
-    if (code === 0) {
-      // Play completion sound
-      playCompletionSound();
-      await moveToHistory(downloadId);
-    }
-    
-    notifyDownloadComplete(downloadId, code, outputPath);
-  });
-
-  return { downloadId };
+    mainWindow.webContents.send('download-update', {
+      downloadId,
+      download_id: downloadId,
+      source,
+      output: outputPath,
+      type: downloadType,
+      status: 'paused',
+      progress: 0,
+      downloaded: 0,
+      total: 0,
+      speed: 0,
+      pause_reason: 'Paused - click resume to start',
+      ...metadata,
+    });
+  }
+  
+  return { success: true, downloadId };
 });
 
 ipcMain.handle('stop-download', async (event, downloadId) => {
@@ -1840,47 +2260,9 @@ ipcMain.handle('remove-download', async (event, downloadId) => {
   // Delete partial files
   if (download) {
     try {
-      const outputPath = download.output;
-      
-      // For HTTP downloads: delete temp directory (.accelara-temp-*)
-      if (download.type === 'http' && outputPath) {
-        const destDir = path.dirname(outputPath);
-        const fileName = path.basename(outputPath);
-        const tempDirName = `.accelara-temp-${fileName}`;
-        const tempDir = path.join(destDir, tempDirName);
-        
-        if (fs.existsSync(tempDir)) {
-          fs.rmSync(tempDir, { recursive: true, force: true });
-        }
-        
-        // Also check for incomplete file at output path (if download was incomplete)
-        if (fs.existsSync(outputPath)) {
-          const stats = fs.statSync(outputPath);
-          // If file is incomplete (smaller than expected total), delete it
-          if (download.total && stats.size < download.total) {
-            fs.unlinkSync(outputPath);
-          }
-        }
-      }
-      
-      // For torrent downloads: check if output is incomplete
-      if ((download.type === 'torrent' || download.type === 'magnet') && outputPath) {
-        // Torrent downloads write directly to output, so if incomplete, delete
-        if (fs.existsSync(outputPath)) {
-          const stats = fs.statSync(outputPath);
-          if (download.total && stats.size < download.total) {
-            if (stats.isDirectory()) {
-              // Directory - remove if incomplete
-              fs.rmSync(outputPath, { recursive: true, force: true });
-            } else {
-              // File - remove if incomplete
-              fs.unlinkSync(outputPath);
-            }
-          }
-        }
-      }
+      await deletePartialFiles(downloadId, download.output, download.type);
     } catch (error) {
-      console.error(`Error deleting partial files for download ${downloadId}:`, error.message);
+      safeConsoleError(`Error deleting partial files for download ${downloadId}:`, error.message);
     }
   }
   
@@ -1904,26 +2286,19 @@ ipcMain.handle('pause-download', async (event, downloadId) => {
       // Windows doesn't support SIGSTOP, so we'll need to track paused state
       // For now, just mark as paused in the database
     }
-  }
-  
-  // Update database status with full metadata and current state
-  try {
-    const db = await getDatabase();
-    const download = db.prepare('SELECT * FROM downloads WHERE id = ?').get(downloadId);
-    if (download) {
+    
+    // Update database status
+    try {
+      const db = await getDatabase();
+      const download = db.prepare('SELECT * FROM downloads WHERE id = ?').get(downloadId);
       const metadata = download.metadata ? JSON.parse(download.metadata) : {};
       const updatedMetadata = {
         ...metadata,
         pause_reason: 'Paused by user',
         paused_at: Date.now(),
-        // Preserve current state in metadata for restoration
-        progress: download.progress || 0,
-        downloaded: download.downloaded || 0,
-        total: download.total || 0,
-        speed: download.speed || 0,
+        options: metadata.options || {},
       };
       
-      // Update both status and all current state fields
       db.prepare(`
         UPDATE downloads 
         SET status = ?, metadata = ?, progress = ?, downloaded = ?, total = ?, speed = ?
@@ -1934,7 +2309,7 @@ ipcMain.handle('pause-download', async (event, downloadId) => {
         download.progress || 0,
         download.downloaded || 0,
         download.total || 0,
-        download.speed || 0,
+        0, // Reset speed to 0 when paused
         downloadId
       );
       
@@ -1947,13 +2322,50 @@ ipcMain.handle('pause-download', async (event, downloadId) => {
           progress: download.progress || 0,
           downloaded: download.downloaded || 0,
           total: download.total || 0,
-          speed: download.speed || 0,
+          speed: 0,
           ...updatedMetadata,
         });
       }
+    } catch (error) {
+      safeConsoleError('Error pausing download:', error.message);
     }
-  } catch (error) {
-    console.error('Error pausing download:', error.message);
+  } else {
+    // Process doesn't exist - update database only
+    try {
+      const db = await getDatabase();
+      const download = db.prepare('SELECT * FROM downloads WHERE id = ?').get(downloadId);
+      if (download && download.status !== 'paused') {
+        const metadata = download.metadata ? JSON.parse(download.metadata) : {};
+        const updatedMetadata = {
+          ...metadata,
+          pause_reason: 'Paused by user',
+          paused_at: Date.now(),
+          options: metadata.options || {},
+        };
+        
+        db.prepare(`
+          UPDATE downloads 
+          SET status = ?, metadata = ?
+          WHERE id = ?
+        `).run('paused', JSON.stringify(updatedMetadata), downloadId);
+        
+        if (mainWindow && !mainWindow.isDestroyed()) {
+          mainWindow.webContents.send('download-update', {
+            download_id: downloadId,
+            downloadId,
+            status: 'paused',
+            pause_reason: 'Paused by user',
+            progress: download.progress || 0,
+            downloaded: download.downloaded || 0,
+            total: download.total || 0,
+            speed: 0,
+            ...updatedMetadata,
+          });
+        }
+      }
+    } catch (error) {
+      safeConsoleError('Error pausing download:', error.message);
+    }
   }
   
   return { success: true };
@@ -1983,7 +2395,7 @@ ipcMain.handle('resume-download', async (event, downloadId) => {
         });
       }
     } catch (error) {
-      console.error('Error resuming download:', error.message);
+      safeConsoleError('Error resuming download:', error.message);
     }
     
     return { success: true };
@@ -2008,6 +2420,11 @@ ipcMain.handle('resume-download', async (event, downloadId) => {
     const args = buildCommandArgs(download.source, download.output, download.id, options);
     const goBinary = verifyAndNormalizeBinary(findGoBinary());
     
+    if (!goBinary || !fs.existsSync(goBinary)) {
+      safeConsoleError('Go binary not found for resume:', goBinary);
+      return { success: false, error: 'Go binary not found' };
+    }
+    
     // For cwd, we need a real directory, not inside ASAR
     let workingDir;
     if (app.isPackaged) {
@@ -2016,89 +2433,179 @@ ipcMain.handle('resume-download', async (event, downloadId) => {
       workingDir = path.join(__dirname, '..');
     }
     
-    const newProc = spawn(goBinary, args, {
-      cwd: workingDir,
-      env: { ...process.env }
-    });
+    try {
+      const newProc = spawn(goBinary, args, {
+        cwd: workingDir,
+        env: { ...process.env }
+      });
+      
+      // Check if process spawned successfully
+      if (!newProc || newProc.pid === undefined) {
+        safeConsoleError('Failed to spawn Go process for resume');
+        return { success: false, error: 'Failed to start download process' };
+      }
+      
+      downloadProcesses.set(download.id, newProc);
+      setupRestartedDownloadHandlers(newProc, download.id, metadata, download);
+      
+      // Handle process errors immediately
+      newProc.on('error', (error) => {
+        safeConsoleError(`Error spawning Go process for download ${download.id}:`, error.message);
+        downloadProcesses.delete(download.id);
+        if (mainWindow && !mainWindow.isDestroyed()) {
+          mainWindow.webContents.send('download-update', {
+            downloadId: download.id,
+            download_id: download.id,
+            status: 'error',
+            error: `Failed to start download: ${error.message}`
+          });
+        }
+      });
+    } catch (spawnError) {
+      safeConsoleError('Exception spawning Go process:', spawnError.message);
+      return { success: false, error: `Failed to spawn process: ${spawnError.message}` };
+    }
     
-    downloadProcesses.set(download.id, newProc);
-    setupRestartedDownloadHandlers(newProc, download.id, metadata, download);
+    // Clear auto_paused flag when user manually resumes
+    const updatedMetadata = {
+      ...metadata,
+      auto_paused: false,
+      pause_reason: null,
+      paused_at: null,
+    };
     
-    // Update database status
-    db.prepare('UPDATE downloads SET status = ? WHERE id = ?').run('downloading', downloadId);
+    // Update database status and clear pause metadata
+    db.prepare(`
+      UPDATE downloads 
+      SET status = ?, metadata = ?
+      WHERE id = ?
+    `).run('downloading', JSON.stringify(updatedMetadata), downloadId);
     
     if (mainWindow && !mainWindow.isDestroyed()) {
       mainWindow.webContents.send('download-update', {
         download_id: downloadId,
         downloadId,
-        status: 'downloading'
+        status: 'downloading',
+        // Include current progress so UI shows correct state
+        progress: download.progress || 0,
+        downloaded: download.downloaded || 0,
+        total: download.total || 0,
       });
     }
     
     return { success: true };
   } catch (error) {
-    console.error('Error restarting paused download:', error.message);
+    safeConsoleError('Error restarting paused download:', error.message);
     return { success: false, error: error.message };
   }
 });
 
 ipcMain.handle('get-active-downloads', async () => {
-  const db = await getDatabase();
-  const activeDownloads = db.prepare(`
-    SELECT * FROM downloads 
-    WHERE status NOT IN ('completed', 'failed', 'cancelled')
-    ORDER BY started_at DESC
-  `).all();
-  
-  return activeDownloads.map(download => {
-    const metadata = download.metadata ? JSON.parse(download.metadata) : {};
-    return {
-      id: download.id,
-      downloadId: download.id,
-      download_id: download.id,
-      source: download.source,
-      output: download.output,
-      type: download.type,
-      status: download.status,
-      // Use database values first, fallback to metadata
-      progress: download.progress !== null && download.progress !== undefined ? download.progress : (metadata.progress || 0),
-      downloaded: download.downloaded !== null && download.downloaded !== undefined ? download.downloaded : (metadata.downloaded || 0),
-      total: download.total !== null && download.total !== undefined ? download.total : (metadata.total || 0),
-      speed: download.speed !== null && download.speed !== undefined ? download.speed : (metadata.speed || metadata.download_rate || 0),
-      pause_reason: metadata.pause_reason || (download.status === 'paused' ? 'Paused' : undefined),
-      // Include all metadata fields for complete state restoration
-      ...metadata,
-      // Preserve torrent-specific fields if present
-      torrent_name: metadata.torrent_name,
-      file_progress: metadata.file_progress,
-      peers: metadata.peers,
-      seeds: metadata.seeds,
-      // Preserve HTTP-specific fields if present
-      chunk_progress: metadata.chunk_progress,
-      speedHistory: metadata.speedHistory || [],
-    };
-  });
+  try {
+    const db = await getDatabase();
+    const downloads = db.prepare(`
+      SELECT * FROM downloads 
+      WHERE status NOT IN ('completed', 'cancelled')
+      ORDER BY started_at DESC
+    `).all();
+    
+    return downloads.map(download => {
+      const metadata = download.metadata ? JSON.parse(download.metadata) : {};
+      return {
+        ...download,
+        metadata,
+      };
+    });
+  } catch (error) {
+    safeConsoleError('Error getting active downloads:', error.message);
+    return [];
+  }
 });
 
 ipcMain.handle('get-download-history', async () => {
   const db = await getDatabase();
+  
+  // Get history items
   const history = db.prepare(`
     SELECT * FROM download_history 
     ORDER BY completed_at DESC 
     LIMIT 100
   `).all();
   
-  return history.map(item => ({
-    ...item,
-    completedAt: item.completed_at,
-    metadata: item.metadata ? JSON.parse(item.metadata) : {}
-  }));
+  // Also include active seeding torrents (they're in both downloads and history)
+  const seedingTorrents = db.prepare(`
+    SELECT d.*, h.completed_at 
+    FROM downloads d
+    LEFT JOIN download_history h ON d.id = h.id
+    WHERE d.status = 'seeding' AND d.type = 'torrent'
+    ORDER BY h.completed_at DESC, d.started_at DESC
+  `).all();
+  
+  // Combine and deduplicate by id
+  const historyMap = new Map();
+  
+  // Add history items
+  history.forEach(item => {
+    historyMap.set(item.id, {
+      id: item.id,
+      source: item.source,
+      output: item.output,
+      type: item.type,
+      size: item.size,
+      completedAt: item.completed_at,
+      metadata: item.metadata ? JSON.parse(item.metadata) : {},
+      isSeeding: false
+    });
+  });
+  
+  // Add/update with seeding torrents
+  seedingTorrents.forEach(item => {
+    const existing = historyMap.get(item.id);
+    if (existing) {
+      // Update existing history item to mark as seeding
+      existing.isSeeding = true;
+      existing.status = 'seeding';
+      existing.progress = item.progress || 1.0;
+      existing.downloaded = item.downloaded || item.size || 0;
+      existing.total = item.total || item.size || 0;
+      existing.speed = item.speed || 0;
+      if (item.metadata) {
+        try {
+          existing.metadata = { ...existing.metadata, ...JSON.parse(item.metadata) };
+        } catch {}
+      }
+    } else {
+      // Add new seeding torrent to history
+      historyMap.set(item.id, {
+        id: item.id,
+        source: item.source,
+        output: item.output,
+        type: item.type,
+        size: item.downloaded || item.total || 0,
+        completedAt: item.completed_at || item.started_at,
+        metadata: item.metadata ? JSON.parse(item.metadata) : {},
+        isSeeding: true,
+        status: 'seeding',
+        progress: item.progress || 1.0,
+        downloaded: item.downloaded || 0,
+        total: item.total || 0,
+        speed: item.speed || 0,
+      });
+    }
+  });
+  
+  return Array.from(historyMap.values());
 });
 
 ipcMain.handle('clear-download-history', async () => {
-  const db = await getDatabase();
-  db.prepare('DELETE FROM download_history').run();
-  return { success: true };
+  try {
+    const db = await getDatabase();
+    db.prepare('DELETE FROM download_history').run();
+    return { success: true };
+  } catch (error) {
+    safeConsoleError('Error clearing download history:', error.message);
+    return { success: false, error: error.message };
+  }
 });
 
 // Helper function to calculate directory size recursively
@@ -2392,14 +2899,14 @@ ipcMain.handle('start-speed-test', async (event, { testType = 'full' }) => {
   });
   
   proc.on('error', (error) => {
-    console.error('=== spawn error ===');
-    console.error('Error code:', error.code);
-    console.error('Error message:', error.message);
-    console.error('Binary path used:', goBinary);
-    console.error('Path exists?', fs.existsSync(goBinary));
+    safeConsoleError('=== spawn error ===');
+    safeConsoleError('Error code:', error.code);
+    safeConsoleError('Error message:', error.message);
+    safeConsoleError('Binary path used:', goBinary);
+    safeConsoleError('Path exists?', fs.existsSync(goBinary));
     if (fs.existsSync(goBinary)) {
       const stats = fs.statSync(goBinary);
-      console.error('Path stats:', {
+      safeConsoleError('Path stats:', {
         isFile: stats.isFile(),
         isDirectory: stats.isDirectory(),
         mode: stats.mode.toString(8),
@@ -2429,9 +2936,20 @@ ipcMain.handle('start-speed-test', async (event, { testType = 'full' }) => {
   proc.stderr.on('data', (data) => {
     // Log errors but don't send to renderer
     try {
-      console.error('Speed test error:', data.toString());
+      const errorMsg = data.toString().trim();
+      if (errorMsg) {
+        console.error(`═══════════════════════════════════════════════════════════`);
+        console.error(`[speed-test] Go Error:`);
+        console.error(`  ${errorMsg}`);
+        console.error(`═══════════════════════════════════════════════════════════`);
+        writeToGoLog('ERROR', 'speed-test', errorMsg);
+      }
     } catch (logError) {
       // Ignore EPIPE errors
+      if (logError.code !== 'EPIPE') {
+        console.error('Error logging speed test stderr:', logError.message);
+        writeToGoLog('ERROR', 'speed-test', `Error logging stderr: ${logError.message}`);
+      }
     }
   });
 
@@ -2606,3 +3124,122 @@ function getDefaultSettings() {
   };
 }
 
+
+// Browser Integration Server
+// Receives download requests from browser extensions
+function startBrowserServer() {
+  if (browserServer) {
+    return; // Already started
+  }
+  
+  browserServer = http.createServer((req, res) => {
+    // Enable CORS for browser extensions
+    res.setHeader('Access-Control-Allow-Origin', '*');
+    res.setHeader('Access-Control-Allow-Methods', 'POST, OPTIONS');
+    res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
+    
+    if (req.method === 'OPTIONS') {
+      res.writeHead(200);
+      res.end();
+      return;
+    }
+    
+    if (req.method === 'POST' && req.url === '/download') {
+      let body = '';
+      
+      req.on('data', (chunk) => {
+        body += chunk.toString();
+      });
+      
+      req.on('end', () => {
+        try {
+          const data = JSON.parse(body);
+          handleBrowserDownload(data);
+          
+          res.writeHead(200, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ success: true }));
+        } catch (error) {
+          console.error('Error processing browser download:', error);
+          res.writeHead(400, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ success: false, error: error.message }));
+        }
+      });
+    } else {
+      res.writeHead(404);
+      res.end('Not found');
+    }
+  });
+  
+  browserServer.listen(BROWSER_SERVER_PORT, 'localhost', () => {
+    try {
+      console.log(`Browser integration server listening on http://localhost:${BROWSER_SERVER_PORT}`);
+    } catch (error) {
+      if (error.code !== 'EPIPE') {
+        // Only log if it's not an EPIPE error (broken pipe)
+        console.error('Error logging server status:', error);
+      }
+    }
+  });
+  
+  browserServer.on('error', (error) => {
+    try {
+      if (error.code === 'EADDRINUSE') {
+        console.log(`Port ${BROWSER_SERVER_PORT} already in use, browser integration may not work`);
+      } else {
+        console.error('Browser server error:', error);
+      }
+    } catch (logError) {
+      if (logError.code !== 'EPIPE') {
+        // Only log if it's not an EPIPE error
+      }
+    }
+  });
+}
+
+// Handle download requests from browser extensions
+function handleBrowserDownload(data) {
+  try {
+    console.log('Received browser download request:', data);
+  } catch (error) {
+    if (error.code !== 'EPIPE') {
+      // Only log if it's not an EPIPE error
+    }
+  }
+  
+  if (!mainWindow || mainWindow.isDestroyed()) {
+    console.warn('Main window not available, cannot handle browser download');
+    return;
+  }
+  
+  // Ensure window is visible
+  if (mainWindow.isMinimized()) {
+    mainWindow.restore();
+  }
+  mainWindow.show();
+  mainWindow.focus();
+  
+  if (data.type === 'magnet') {
+    // Handle magnet link
+    const magnetUrl = data.url || data.source;
+    if (magnetUrl && magnetUrl.startsWith('magnet:')) {
+      handleMagnetLink(magnetUrl);
+    }
+  } else if (data.type === 'download') {
+    // Handle HTTP/FTP download
+    const url = data.url || data.source;
+    const filename = data.filename;
+    
+    if (url && (url.startsWith('http://') || url.startsWith('https://') || url.startsWith('ftp://'))) {
+      // Send to renderer to open download modal
+      if (mainWindow.webContents) {
+        mainWindow.webContents.send('external-download', {
+          type: 'http',
+          source: url,
+          filename: filename,
+          referrer: data.referrer,
+          mimeType: data.mimeType
+        });
+      }
+    }
+  }
+}

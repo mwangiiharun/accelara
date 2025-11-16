@@ -1,0 +1,42 @@
+[package]
+name = "accelara"
+version = "3.0.0"
+description = "ACCELARA - Unified HTTP + BitTorrent CLI Download Manager"
+authors = ["Mwangii Kinuthia"]
+license = "MIT"
+repository = ""
+edition = "2021"
+rust-version = "1.77.2"
+
+[lib]
+name = "accelara_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[build-dependencies]
+tauri-build = { version = "2.5.1", features = [] }
+
+[dependencies]
+serde_json = "1.0"
+serde = { version = "1.0", features = ["derive"] }
+log = "0.4"
+tauri = { version = "2.9.2", features = ["macos-private-api"] }
+tauri-plugin-log = { version = "2", features = [] }
+tauri-plugin-shell = { version = "2", features = [] }
+tauri-plugin-dialog = { version = "2", features = [] }
+tauri-plugin-fs = { version = "2", features = [] }
+tauri-plugin-os = { version = "2", features = [] }
+tauri-plugin-process = { version = "2", features = [] }
+rusqlite = { version = "0.31", features = ["bundled"] }
+tokio = { version = "1", features = ["full"] }
+reqwest = { version = "0.12", features = ["json"] }
+dirs = "5.0"
+which = "6.0"
+lazy_static = "1.4"
+nanoid = "0.4"
+chrono = "0.4"
+axum = { version = "0.7", features = ["macros"] }
+tower = "0.4"
+tower-http = { version = "0.5", features = ["cors"] }
+
+[target.'cfg(windows)'.dependencies]
+winreg = "0.52"

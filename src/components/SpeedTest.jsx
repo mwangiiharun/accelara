@@ -34,16 +34,44 @@ export default function SpeedTest() {
           if (data.latency.google_ping) {
             setGooglePing(data.latency.google_ping);
             googlePingRef.current = data.latency.google_ping;
+          } else if (data.latency.googlePing) {
+            setGooglePing(data.latency.googlePing);
+            googlePingRef.current = data.latency.googlePing;
           }
           setTestType('latency');
-        } else if (data.type === 'download' && data.download_speed !== undefined) {
-          setDownloadSpeed(data.download_speed);
-          downloadSpeedRef.current = data.download_speed;
+        } else if (data.type === 'download' && (data.download_speed !== undefined || data.downloadSpeed !== undefined)) {
+          const speed = data.download_speed ?? data.downloadSpeed ?? 0;
+          setDownloadSpeed(speed);
+          downloadSpeedRef.current = speed;
           setTestType('download');
-        } else if (data.type === 'upload' && data.upload_speed !== undefined) {
-          setUploadSpeed(data.upload_speed);
-          uploadSpeedRef.current = data.upload_speed;
+        } else if (data.type === 'upload' && (data.upload_speed !== undefined || data.uploadSpeed !== undefined)) {
+          const speed = data.upload_speed ?? data.uploadSpeed ?? 0;
+          setUploadSpeed(speed);
+          uploadSpeedRef.current = speed;
           setTestType('upload');
+        } else if (data.type === 'full') {
+          // Handle full test results
+          if (data.download_speed !== undefined || data.downloadSpeed !== undefined) {
+            const speed = data.download_speed ?? data.downloadSpeed ?? 0;
+            setDownloadSpeed(speed);
+            downloadSpeedRef.current = speed;
+          }
+          if (data.upload_speed !== undefined || data.uploadSpeed !== undefined) {
+            const speed = data.upload_speed ?? data.uploadSpeed ?? 0;
+            setUploadSpeed(speed);
+            uploadSpeedRef.current = speed;
+          }
+          if (data.latency) {
+            setLatency(data.latency);
+            latencyRef.current = data.latency;
+            if (data.latency.google_ping) {
+              setGooglePing(data.latency.google_ping);
+              googlePingRef.current = data.latency.google_ping;
+            } else if (data.latency.googlePing) {
+              setGooglePing(data.latency.googlePing);
+              googlePingRef.current = data.latency.googlePing;
+            }
+          }
         }
         if (data.progress !== undefined) {
           setProgress(data.progress);
@@ -54,7 +82,34 @@ export default function SpeedTest() {
         setIsRunning(false);
         setTestType(null);
         setProgress(100);
-        // Use refs to get the latest values immediately
+        
+        // If result is included in the completion event, use it
+        if (data.result) {
+          const result = data.result;
+          if (result.download_speed !== undefined || result.downloadSpeed !== undefined) {
+            const speed = result.download_speed ?? result.downloadSpeed ?? 0;
+            setDownloadSpeed(speed);
+            downloadSpeedRef.current = speed;
+          }
+          if (result.upload_speed !== undefined || result.uploadSpeed !== undefined) {
+            const speed = result.upload_speed ?? result.uploadSpeed ?? 0;
+            setUploadSpeed(speed);
+            uploadSpeedRef.current = speed;
+          }
+          if (result.latency) {
+            setLatency(result.latency);
+            latencyRef.current = result.latency;
+            if (result.latency.google_ping) {
+              setGooglePing(result.latency.google_ping);
+              googlePingRef.current = result.latency.google_ping;
+            } else if (result.latency.googlePing) {
+              setGooglePing(result.latency.googlePing);
+              googlePingRef.current = result.latency.googlePing;
+            }
+          }
+        }
+        
+        // Use refs to get the latest values and save
         setTimeout(async () => {
           await saveResultWithValues(
             downloadSpeedRef.current,
@@ -306,11 +361,20 @@ export default function SpeedTest() {
                   </span>
                   <span className="theme-text-secondary">{Math.round(progress)}%</span>
                 </div>
-                <div className="w-full theme-bg-secondary rounded-full h-2 overflow-hidden">
+                <div className="w-full theme-bg-secondary rounded-full h-2 overflow-hidden relative">
                   <div
-                    className="h-2 rounded-full transition-all bg-primary-500"
+                    className="h-2 rounded-full transition-all duration-300 bg-primary-500 relative overflow-hidden"
                     style={{ width: `${Math.min(progress, 100)}%`, maxWidth: '100%' }}
-                  />
+                  >
+                    {/* Animated shimmer effect */}
+                    <div 
+                      className="absolute inset-0 animate-shimmer"
+                      style={{
+                        background: 'linear-gradient(90deg, transparent, rgba(255,255,255,0.4), transparent)',
+                        width: '50%',
+                      }}
+                    />
+                  </div>
                 </div>
               </div>
             )}
@@ -328,8 +392,9 @@ export default function SpeedTest() {
                 value={downloadSpeed > 0 ? (downloadSpeed / 1024 / 1024 * 8) : 0}
                 maxValue={100}
                 unit="Mbps"
-                label={downloadSpeed > 0 ? formatBytes(downloadSpeed) + '/s' : 'Not tested'}
+                label={downloadSpeed > 0 ? formatBytes(downloadSpeed) + '/s' : (isRunning ? 'Testing...' : 'Not tested')}
                 color="#0ea5e9"
+                isRunning={isRunning}
               />
             </div>
 
@@ -343,15 +408,16 @@ export default function SpeedTest() {
                 value={uploadSpeed > 0 ? (uploadSpeed / 1024 / 1024 * 8) : 0}
                 maxValue={100}
                 unit="Mbps"
-                label={uploadSpeed > 0 ? formatBytes(uploadSpeed) + '/s' : 'Not tested'}
+                label={uploadSpeed > 0 ? formatBytes(uploadSpeed) + '/s' : (isRunning ? 'Testing...' : 'Not tested')}
                 color="#10b981"
+                isRunning={isRunning}
               />
             </div>
 
             {/* Latency */}
             <div className="card flex flex-col items-center">
               <div className="flex items-center gap-2 mb-4">
-                <Gauge className="w-5 h-5 text-yellow-500" />
+                <Gauge className={`w-5 h-5 text-yellow-500 ${isRunning && !latency ? 'animate-pulse' : ''}`} />
                 <h3 className="text-lg font-semibold theme-text-primary">Latency</h3>
               </div>
               {latency ? (
@@ -375,7 +441,17 @@ export default function SpeedTest() {
                   </div>
                 </div>
               ) : (
-                <p className="text-sm theme-text-tertiary">Not tested</p>
+                <div className="flex flex-col items-center">
+                  {isRunning ? (
+                    <>
+                      <div className="w-16 h-16 border-4 border-yellow-500/30 rounded-full animate-spin mb-2" 
+                           style={{ borderTopColor: '#eab308' }} />
+                      <p className="text-sm theme-text-tertiary animate-pulse">Testing...</p>
+                    </>
+                  ) : (
+                    <p className="text-sm theme-text-tertiary">Not tested</p>
+                  )}
+                </div>
               )}
             </div>
           </div>

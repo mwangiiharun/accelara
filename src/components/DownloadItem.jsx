@@ -1,13 +1,15 @@
 import { useState } from 'react';
 import { useDownloads } from '../context/DownloadContext';
-import { Zap, Magnet, File, X, Pause, Play, FolderOpen, ChevronDown, ChevronUp, Activity, Trash2 } from 'lucide-react';
+import { Zap, Magnet, File, X, Pause, Play, FolderOpen, ChevronDown, ChevronUp, Activity, Trash2, AlertCircle, Info } from 'lucide-react';
 import { formatBytes, formatTime } from '../utils/format';
 import SpeedChart from './SpeedChart';
 
 export default function DownloadItem({ download }) {
-  const { stopDownload, pauseDownload, resumeDownload, removeDownload } = useDownloads();
+  const { stopDownload, pauseDownload, resumeDownload, removeDownload, highlightedDownloadId, setHighlightedDownloadId } = useDownloads();
   const [showChunks, setShowChunks] = useState(false);
   const [showFiles, setShowFiles] = useState(false);
+  
+  const isHighlighted = highlightedDownloadId === download.id;
 
   const handleOpenFolder = async () => {
     if (window.electronAPI && download.output) {
@@ -49,7 +51,14 @@ export default function DownloadItem({ download }) {
   const total = download.total || 0;
 
   return (
-    <div className="theme-bg-tertiary rounded-lg p-4 border theme-border hover:theme-bg-hover transition-colors">
+    <div 
+      className={`theme-bg-tertiary rounded-lg p-4 border transition-colors cursor-pointer ${
+        isHighlighted 
+          ? 'border-primary-400 border-2 theme-bg-hover shadow-lg' 
+          : 'theme-border hover:theme-bg-hover'
+      }`}
+      onClick={() => setHighlightedDownloadId(download.id)}
+    >
       <div className="flex items-start justify-between mb-3">
         <div className="flex items-center gap-3 flex-1 min-w-0">
           {getIcon()}
@@ -68,7 +77,7 @@ export default function DownloadItem({ download }) {
           </span>
           {(download.status === 'completed' || download.status === 'seeding') && download.output && (
             <button
-              onClick={handleOpenFolder}
+              onClick={(e) => { e.stopPropagation(); handleOpenFolder(); }}
               className="p-1 hover:theme-bg-hover rounded transition-colors"
               title="Open folder"
             >
@@ -77,7 +86,7 @@ export default function DownloadItem({ download }) {
           )}
           {download.status === 'downloading' && (
             <button
-              onClick={() => pauseDownload(download.id)}
+              onClick={(e) => { e.stopPropagation(); pauseDownload(download.id); }}
               className="p-1 hover:theme-bg-hover rounded transition-colors"
               title="Pause download"
             >
@@ -86,7 +95,7 @@ export default function DownloadItem({ download }) {
           )}
           {download.status === 'paused' && (
             <button
-              onClick={() => resumeDownload(download.id)}
+              onClick={(e) => { e.stopPropagation(); resumeDownload(download.id); }}
               className="p-1 hover:theme-bg-hover rounded transition-colors"
               title="Resume download"
             >
@@ -95,7 +104,7 @@ export default function DownloadItem({ download }) {
           )}
           {download.status !== 'completed' && download.status !== 'seeding' && download.status !== 'downloading' && download.status !== 'paused' && (
             <button
-              onClick={() => stopDownload(download.id)}
+              onClick={(e) => { e.stopPropagation(); stopDownload(download.id); }}
               className="p-1 hover:theme-bg-hover rounded transition-colors"
               title="Stop download"
             >
@@ -104,7 +113,7 @@ export default function DownloadItem({ download }) {
           )}
           {/* Close/Remove button - always visible */}
           <button
-            onClick={() => removeDownload(download.id)}
+            onClick={(e) => { e.stopPropagation(); removeDownload(download.id); }}
             className="p-1 hover:theme-bg-hover rounded transition-colors"
             title="Remove download and delete partial files"
           >
@@ -142,26 +151,80 @@ export default function DownloadItem({ download }) {
             {download.pause_reason}
           </div>
         )}
+        {/* Error Messages */}
+        {download.error && (
+          <div className="mt-2 p-2 bg-red-500/10 border border-red-500/20 rounded text-xs text-red-600 dark:text-red-400 flex items-start gap-2">
+            <AlertCircle className="w-4 h-4 flex-shrink-0 mt-0.5" />
+            <span className="flex-1">{download.error}</span>
+          </div>
+        )}
+        {/* Info/Status Messages */}
+        {download.message && download.status !== 'error' && (
+          <div className="mt-2 p-2 theme-bg-secondary rounded text-xs theme-text-secondary flex items-start gap-2">
+            <Info className="w-4 h-4 flex-shrink-0 mt-0.5" />
+            <span className="flex-1">{download.message}</span>
+          </div>
+        )}
+        {/* Message History (for HTTP downloads) */}
+        {download.type === 'http' && download.messages && download.messages.length > 0 && (
+          <div className="mt-2 space-y-1 max-h-32 overflow-y-auto">
+            {download.messages.slice(-5).map((msg, idx) => (
+              <div 
+                key={idx} 
+                className={`p-2 rounded text-xs flex items-start gap-2 ${
+                  msg.type === 'error' 
+                    ? 'bg-red-500/10 border border-red-500/20 text-red-600 dark:text-red-400'
+                    : msg.type === 'info'
+                    ? 'theme-bg-secondary theme-text-secondary'
+                    : 'theme-bg-secondary theme-text-tertiary'
+                }`}
+              >
+                {msg.type === 'error' ? (
+                  <AlertCircle className="w-3 h-3 flex-shrink-0 mt-0.5" />
+                ) : (
+                  <Info className="w-3 h-3 flex-shrink-0 mt-0.5" />
+                )}
+                <span className="flex-1 text-xs">{msg.text}</span>
+              </div>
+            ))}
+          </div>
+        )}
       </div>
 
-      {/* Stats */}
-      <div className="grid grid-cols-3 gap-4 text-sm">
-        <div>
-          <p className="theme-text-tertiary">Speed</p>
-          <p className="theme-text-primary font-medium">{formatBytes(speed)}/s</p>
-        </div>
-        <div>
-          <p className="theme-text-tertiary">ETA</p>
-          <p className="theme-text-primary font-medium">
-            {download.status === 'paused' ? '--' : eta > 0 ? formatTime(eta) : '--'}
-          </p>
-        </div>
-        {(download.peers !== undefined || download.seeds !== undefined) && (
+      {/* Stats - Per Download */}
+      <div className="mt-4 pt-4 border-t theme-border">
+        <h3 className="text-sm font-medium theme-text-secondary mb-3">Download Stats</h3>
+        <div className="grid grid-cols-3 gap-4 text-sm">
           <div>
-            <p className="theme-text-tertiary">Peers/Seeds</p>
+            <p className="theme-text-tertiary">Speed</p>
+            <p className="theme-text-primary font-medium">{formatBytes(speed)}/s</p>
+          </div>
+          <div>
+            <p className="theme-text-tertiary">ETA</p>
             <p className="theme-text-primary font-medium">
-              {download.peers || 0} / {download.seeds || 0}
+              {download.status === 'paused' ? '--' : eta > 0 ? formatTime(eta) : '--'}
             </p>
+          </div>
+          {(download.peers !== undefined || download.seeds !== undefined) ? (
+            <div>
+              <p className="theme-text-tertiary">Peers/Seeds</p>
+              <p className="theme-text-primary font-medium">
+                {download.peers || 0} / {download.seeds || 0}
+              </p>
+            </div>
+          ) : (
+            <div>
+              <p className="theme-text-tertiary">Progress</p>
+              <p className="theme-text-primary font-medium">
+                {Math.round(Math.min(progress, 1.0) * 100)}%
+              </p>
+            </div>
+          )}
+        </div>
+        {(download.type === 'torrent' || download.type === 'magnet') && download.upload_rate > 0 && (
+          <div className="mt-2 text-sm">
+            <p className="theme-text-tertiary">Upload Rate</p>
+            <p className="theme-text-primary font-medium">{formatBytes(download.upload_rate || 0)}/s</p>
           </div>
         )}
       </div>
@@ -293,7 +356,7 @@ export default function DownloadItem({ download }) {
             className="flex items-center gap-2 text-sm theme-text-secondary hover:theme-text-primary transition-colors mb-2"
           >
             {showChunks ? <ChevronUp className="w-4 h-4" /> : <ChevronDown className="w-4 h-4" />}
-            <span>Chunk Progress ({download.chunk_progress.length} chunks)</span>
+            <span>Parts ({download.chunk_progress.length})</span>
           </button>
           {showChunks && (
             <div className="space-y-2 max-h-48 overflow-y-auto">
@@ -301,10 +364,7 @@ export default function DownloadItem({ download }) {
                 <div key={idx} className="theme-bg-secondary rounded p-2">
                   <div className="flex justify-between text-xs mb-1">
                     <span className="theme-text-secondary">
-                      Chunk {chunk.index + 1}: {formatBytes(chunk.start)} - {formatBytes(chunk.end)}
-                    </span>
-                    <span className="theme-text-secondary">
-                      {Math.round(chunk.progress * 100)}%
+                      Part {chunk.index}: {Math.round(chunk.progress * 100)}%
                     </span>
                   </div>
                   <div className="w-full theme-bg-primary rounded-full h-1.5 overflow-hidden">
@@ -323,12 +383,21 @@ export default function DownloadItem({ download }) {
       {/* Speed Chart for HTTP downloads */}
       {download.type === 'http' && download.speedHistory && download.speedHistory.length > 0 && (
         <div className="mt-4 pt-4 border-t theme-border">
-          <SpeedChart 
-            title="Download Speed" 
-            data={download.speedHistory.map(p => ({ time: p.time, value: p.value }))} 
-            color="#0ea5e9"
-            height={120}
-          />
+          <button
+            onClick={() => setShowChunks(!showChunks)}
+            className="flex items-center gap-2 text-sm theme-text-secondary hover:theme-text-primary transition-colors mb-2"
+          >
+            {showChunks ? <ChevronUp className="w-4 h-4" /> : <ChevronDown className="w-4 h-4" />}
+            <span>Speed Chart</span>
+          </button>
+          {showChunks && (
+            <SpeedChart 
+              title="Download Speed" 
+              data={download.speedHistory.map(p => ({ time: p.time, value: p.value }))} 
+              color="#0ea5e9"
+              height={120}
+            />
+          )}
         </div>
       )}
     </div>

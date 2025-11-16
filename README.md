@@ -28,7 +28,7 @@ So you're tired of `wget` being boring, `curl` being cryptic, and your browser d
 
 This is a **unified command-line download manager** that handles both HTTP/HTTPS and BitTorrent downloads. It's like having a Swiss Army knife, but instead of a corkscrew you'll never use, you get segmented downloads and resume support that actually works.
 
-Oh, and I also built a **fancy Electron GUI** because apparently typing commands is too hard for some people. (I'm looking at you, future self who got tired of the terminal after building the CLI version.)
+Oh, and I also built a **fancy Tauri GUI** because apparently typing commands is too hard for some people. (I'm looking at you, future self who got tired of the terminal after building the CLI version. Also, Electron was being a pain, so we migrated to Tauri. Smaller bundle size, native performance, and fewer headaches. Win-win-win.)
 
 ---
 
@@ -118,50 +118,58 @@ Now you can run it like a real program:
 
 ---
 
-## Electron GUI Installation
+## Tauri GUI Installation
 
 ### Prerequisites
 
 - Node.js 20+ and npm - I needed more dependencies (Vite requires 20.19+ or 22.12+)
+- Rust 1.77+ and Cargo - Tauri needs Rust (because why not add another language to the mix?)
 - Go 1.21+ (for the backend)
 - Make (optional, but recommended)
 
 ### Setup 
 
-1. **Build the Go backend**:
+1. **Install Rust** (if you don't have it):
+   ```bash
+   curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
+   # Or on macOS: brew install rust
+   ```
+
+2. **Build the Go backend**:
    ```bash
    make build-api
    # Or manually: go build -o bin/api-wrapper ./cmd/api-wrapper
    ```
 
-2. **Install Node.js dependencies** (this will download half the internet):
+3. **Install Node.js dependencies** (this will download half the internet):
    ```bash
    npm install
    ```
 
-3. **Run in development mode** :
+4. **Run in development mode** :
    ```bash
-   npm run dev
+   npm run dev:tauri
    ```
 
    This will:
-   - Start Vite dev server (http://localhost:5173)
-   - Launch Electron window - clicking is easier than typing
+   - Build Go binaries
+   - Start Vite dev server (http://localhost:5174)
+   - Compile Rust backend (first time takes forever, grab coffee)
+   - Launch Tauri window - clicking is easier than typing
    - Enable hot reload - watch your changes break in real-time!
 
-4. **Build for production**:
+5. **Build for production**:
    ```bash
-   make build-api      # Build Go backend
-   npm run build:react # Build React app
-   npm run build       # Build Electron app with verification (creates DMG with binary verification)
+   npm run build
    ```
 
    The build process includes:
-   - Go binary compilation
+   - Go binary compilation (api-wrapper, iris)
    - React frontend build
-   - Electron app packaging
-   - Binary verification (ensures api-wrapper is copied and executable)
-   - DMG creation with post-verification
+   - Resource verification (ensures all files are in place)
+   - Rust compilation (optimized release build)
+   - Tauri app packaging
+   - DMG creation (macOS) with all binaries bundled
 
 ---
 
@@ -178,23 +186,20 @@ npm run build
 ```
 
 This will:
-- Build the Go backend (`make build-api`)
+- Build the Go backend (`make build-api` - creates `api-wrapper` and downloads `iris`)
 - Build the React frontend (`vite build`)
-- Package everything with electron-builder (`electron-builder --mac --dir`)
-- Run `scripts/createDMG.js` which:
-  - Copies Go binaries to app bundle with verification (size, permissions, existence)
-  - Renames Electron.app to ACCELARA.app
-  - Updates Info.plist with correct app name and icon
-  - Unpacks sql.js for database functionality
-  - Creates app.asar if missing
-  - Creates DMG with post-verification (mounts DMG and verifies binary is accessible)
+- Verify all resources are in place (`verify:resources` script)
+- Compile Rust backend (Tauri) with optimizations
+- Package everything with Tauri (`tauri build`)
+- Create DMG with all binaries properly bundled
 
 **Verification Steps:**
-- ✅ Binary copy verification (size, permissions, existence)
-- ✅ Pre-DMG binary check
-- ✅ Post-DMG binary verification (mounts DMG and checks binary is accessible)
+- ✅ Go binaries verified (`api-wrapper`, `iris`)
+- ✅ Frontend files verified (`index.html`, `debug-logs.html`)
+- ✅ Resources automatically copied if missing
+- ✅ Tauri bundles everything correctly (no more missing binary issues!)
 
-**Output:** `release/ACCELARA.dmg` - A verified DMG file ready for distribution.
+**Output:** `src-tauri/target/release/bundle/dmg/ACCELARA_*.dmg` - A verified DMG file ready for distribution.
 
 **But wait!** This only builds for your current platform. Want to build for all platforms? Read on, you ambitious soul.
 
@@ -210,26 +215,21 @@ npm run build
 ```
 
 This runs the full build process with verification:
-1. Builds Go binaries (`bin/api-wrapper`)
+1. Builds Go binaries (`bin/api-wrapper`, `bin/iris`)
 2. Builds React frontend
-3. Packages Electron app
-4. Runs `scripts/createDMG.js` which:
-   - Verifies binaries are copied correctly (size, permissions, existence)
-   - Creates properly named ACCELARA.app
-   - Updates Info.plist with correct app name and icon
-   - Unpacks sql.js for database functionality
-   - Creates app.asar if missing
-   - Verifies binary exists and is executable before DMG creation
-   - Creates DMG
-   - Mounts DMG and verifies binary is accessible (post-verification)
+3. Verifies all resources are in place
+4. Compiles Rust backend (Tauri) in release mode
+5. Packages Tauri app with all binaries bundled
+6. Creates DMG automatically
 
-**Output:** `release/ACCELARA.dmg` - A verified DMG file ready for distribution.
+**Output:** `src-tauri/target/release/bundle/dmg/ACCELARA_*.dmg` - A verified DMG file ready for distribution.
 
 **What you get:**
-- `ACCELARA.dmg` - The installer that makes macOS users feel fancy (with verified binary)
+- `ACCELARA.dmg` - The installer that makes macOS users feel fancy (with all binaries properly bundled)
 - `ACCELARA.app` - The actual app (because `.app` bundles are macOS's way of saying "I'm organized")
+- All Go binaries in `Resources/bin/` (Tauri handles this automatically, no more manual copying!)
 
-**Note:** The build process includes multiple verification steps to ensure the Go binary (`api-wrapper`) is correctly included and accessible. If verification fails, the build will exit with an error.
+**Note:** The build process includes resource verification to ensure everything is in place before building. Tauri automatically bundles resources correctly, so no more missing binary issues!
 
 **Pro tip:** If you want to code-sign it (so macOS doesn't throw scary warnings), you'll need an Apple Developer account. But honestly, who has $99/year for that? Just tell users to right-click and "Open Anyway" like the rest of us rebels.
 
@@ -383,29 +383,22 @@ Then combine them all and feel like a real software distributor. You've made it.
 
 ### Build Configuration
 
-Want to customize the build? Edit `package.json` under the `"build"` section:
+Want to customize the build? Edit `src-tauri/tauri.conf.json`:
 
 ```json
 {
+  "productName": "ACCELARA",
+  "version": "3.0.0",
+  "identifier": "com.mwangiiharun.accelara",
   "build": {
-    "appId": "com.accelara.downloader",
-    "productName": "ACCELARA",
-    "directories": {
-      "output": "release"
-    },
-    "extraResources": [
-      "bin/api-wrapper"  // The Go binary (automatically included)
+    "frontendDist": "../dist",
+    "beforeBuildCommand": "make build-api && npm run build:react"
+  },
+  "bundle": {
+    "resources": [
+      "../bin"  // Go binaries (automatically bundled)
     ],
-    "mac": {
-      "category": "public.app-category.utilities",
-      "target": ["dmg"]
-    },
-    "win": {
-      "target": ["nsis"]
-    },
-    "linux": {
-      "target": ["AppImage"]
-    }
+    "targets": ["dmg"]  // macOS DMG
   }
 }
 ```
@@ -413,9 +406,10 @@ Want to customize the build? Edit `package.json` under the `"build"` section:
 **Common customizations:**
 
 - **Change app name:** Edit `productName`
-- **Add icon:** Put `icon.icns` (macOS), `icon.ico` (Windows), `icon.png` (Linux) in `build/` folder
-- **Change output directory:** Edit `directories.output`
-- **Add more formats:** Add targets like `["zip"]`, `["tar.gz"]`, etc.
+- **Change version:** Edit `version` (also update `package.json` and `Cargo.toml`)
+- **Add icon:** Put icons in `icons/` folder (Tauri handles multiple formats)
+- **Change output:** Tauri outputs to `src-tauri/target/release/bundle/`
+- **Add more targets:** Add `["dmg", "app", "zip"]` for multiple formats
 
 ---
 
@@ -428,9 +422,17 @@ Make sure you built the Go backend first:
 make build-api
 ```
 
-**"Windows build says 'electron-builder not found'"**
+**"Build failed with 'cargo not found'"**
 
-You're probably not on Windows. Use GitHub Actions or get a Windows machine. I can't help you here.
+Rust/Cargo isn't in your PATH. Add it:
+```bash
+export PATH="$HOME/.cargo/bin:$PATH"
+# Or add to your ~/.zshrc or ~/.bashrc
+```
+
+**"Windows build says 'tauri not found'"**
+
+You're probably not on Windows, or Rust isn't installed. Install Rust first, then use GitHub Actions or get a Windows machine. I can't help you here.
 
 **"Linux build creates a file but it won't run"**
 
@@ -451,14 +453,13 @@ Or get an Apple Developer account and code-sign it. But that costs money, and we
 
 **"The build is huge!"**
 
-Yeah, Electron apps are chonky. The Go binary is ~20MB, Electron runtime is ~100MB+, and your React bundle adds more. Total: probably 150-200MB. It's the price we pay for cross-platform desktop apps that don't require users to install Python, Node, Go, and a partridge in a pear tree.
+Good news: Tauri apps are WAY smaller than Electron! The Go binaries are ~20MB, Rust runtime is minimal, and your React bundle adds more. Total: probably 50-80MB (vs 150-200MB for Electron). It's the price we pay for cross-platform desktop apps, but at least it's not Electron-sized.
 
 **"Can I make it smaller?"**
 
-- Use `electron-builder`'s compression options
 - Strip debug symbols from the Go binary (`go build -ldflags="-s -w"`)
-- Use `asar` compression (already enabled by default)
-- Accept that desktop apps are just... big
+- Use Rust release builds (already enabled)
+- Accept that desktop apps are just... big (but smaller than Electron!)
 
 ---
 
@@ -759,9 +760,13 @@ accelara/
 ├── internal/
 │   ├── downloader/    # Core download logic (HTTP & BitTorrent)
 │   └── utils/         # Utility functions
-├── electron/          # Electron main process (the GUI part)
-│   ├── main.js        # Main Electron process
-│   └── preload.js     # Preload script for IPC
+├── src-tauri/         # Tauri backend (the Rust part)
+│   ├── src/           # Rust source code
+│   │   ├── commands.rs    # Tauri command handlers
+│   │   ├── database.rs    # SQLite database management
+│   │   ├── download.rs    # Download process monitoring
+│   │   └── utils.rs        # Utility functions
+│   └── tauri.conf.json    # Tauri configuration
 ├── src/               # React frontend (the pretty part)
 │   ├── components/    # React components
 │   ├── context/       # React context providers
@@ -777,15 +782,18 @@ accelara/
 
 Stack Overflow demands it, so here's what I used:
 
-- **Electron** - Desktop app framework.
+- **Tauri** - Desktop app framework (Rust + WebView). Smaller, faster, better than Electron.
 - **React** - UI framework. 
 - **Tailwind CSS** - Styling. Writing CSS is hard.
 - **Recharts** - Chart library. 
 - **Lucide React** - Icons. 
 - **Vite** - Build tool. Webpack is slow.
-- **Go** - Backend.
+- **Rust** - Backend (Tauri commands, database, process management).
+- **rusqlite** - SQLite database (bundled, no external dependencies).
+- **Go** - Download engine.
 - **net/http** - HTTP client. 
 - **anacrolix/torrent** - BitTorrent library. Pure Go (CGO disabled on Windows builds for compatibility).
+- **iris** - Speed test CLI tool (from mwangiiharun/iris).
 
 ---
 

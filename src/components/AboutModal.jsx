@@ -3,12 +3,14 @@ import { X, ExternalLink } from 'lucide-react';
 export default function AboutModal({ onClose }) {
   const libraries = [
     { name: 'anacrolix/torrent', url: 'https://github.com/anacrolix/torrent', description: 'BitTorrent client library' },
-    { name: 'sql.js', url: 'https://github.com/sql-js/sql.js', description: 'SQLite database' },
+    { name: 'rusqlite', url: 'https://github.com/rusqlite/rusqlite', description: 'SQLite database' },
     { name: 'React', url: 'https://react.dev', description: 'UI framework' },
-    { name: 'Electron', url: 'https://www.electronjs.org', description: 'Desktop framework' },
+    { name: 'Tauri', url: 'https://tauri.app', description: 'Desktop framework' },
     { name: 'Vite', url: 'https://vitejs.dev', description: 'Build tool' },
     { name: 'Tailwind CSS', url: 'https://tailwindcss.com', description: 'Styling' },
     { name: 'Recharts', url: 'https://recharts.org', description: 'Charts' },
+    { name: 'Axum', url: 'https://github.com/tokio-rs/axum', description: 'HTTP server framework' },
+    { name: 'Tokio', url: 'https://tokio.rs', description: 'Async runtime' },
   ];
 
   return (
@@ -27,10 +29,16 @@ export default function AboutModal({ onClose }) {
         <div className="space-y-4 theme-text-secondary">
           <div>
             <p className="text-lg mb-2">
-              <span className="font-semibold theme-text-primary">ACCELARA</span> - High-performance download manager
+              <span className="font-semibold theme-text-primary">ACCELARA</span> v2.3.1
+            </p>
+            <p className="text-sm mb-2">
+              High-performance unified HTTP + BitTorrent download manager
             </p>
             <p className="text-sm">
               Copyright © 2025 <span className="font-medium theme-text-primary">Mwangii Kinuthia</span>
+            </p>
+            <p className="text-xs theme-text-tertiary mt-2">
+              Built with Tauri for native performance and smaller bundle size
             </p>
           </div>
 
@@ -57,6 +65,19 @@ export default function AboutModal({ onClose }) {
                 </div>
               ))}
             </div>
+          </div>
+
+          <div className="pt-4 border-t theme-border">
+            <h3 className="text-lg font-semibold theme-text-primary mb-3">Features</h3>
+            <ul className="text-sm theme-text-secondary space-y-1 list-disc list-inside">
+              <li>HTTP/HTTPS downloads with chunked downloading and resume support</li>
+              <li>BitTorrent and Magnet link support</li>
+              <li>Browser extension integration (Chrome & Firefox)</li>
+              <li>Speed test functionality</li>
+              <li>Download history and statistics</li>
+              <li>System theme detection</li>
+              <li>Background/daemon mode</li>
+            </ul>
           </div>
 
           <div className="pt-4 border-t theme-border">

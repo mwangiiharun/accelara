@@ -9,6 +9,7 @@ export function SettingsProvider({ children }) {
     rateLimit: null,
     uploadLimit: null,
     sequentialMode: false,
+    keepSeeding: false,
     theme: 'system',
     connectTimeout: 15,
     readTimeout: 60,

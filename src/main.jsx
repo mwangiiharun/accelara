@@ -3,6 +3,7 @@ import ReactDOM from 'react-dom/client';
 import App from './App';
 import ErrorBoundary from './ErrorBoundary';
 import './index.css';
+import './tauri-api'; // Initialize Tauri API wrapper
 
 // Wait for DOM to be ready
 if (document.readyState === 'loading') {
