@@ -190,11 +190,11 @@ export const tauriAPI = {
 
   async downloadUpdate(assetUrl, filename) {
     return await invoke('download_update', { assetUrl, filename });
-  }
+  },
 
   async installUpdate(filePath) {
     return await invoke('install_update', { filePath });
-  }
+  },
 
   async restartApp() {
     return await invoke('restart_app');

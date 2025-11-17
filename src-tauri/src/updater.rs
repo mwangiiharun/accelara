@@ -231,8 +231,9 @@ pub async fn install_update(file_path: &PathBuf) -> Result<(), String> {
     }
     
     // Get current app bundle path
-    let current_app = std::env::current_exe()
-        .map_err(|e| format!("Failed to get current executable: {}", e))?
+    let exe_path = std::env::current_exe()
+        .map_err(|e| format!("Failed to get current executable: {}", e))?;
+    let current_app = exe_path
         .parent()
         .and_then(|p| p.parent())
         .and_then(|p| p.parent())
