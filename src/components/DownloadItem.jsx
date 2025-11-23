@@ -1,11 +1,11 @@
 import { useState } from 'react';
 import { useDownloads } from '../context/DownloadContext';
-import { Zap, Magnet, File, X, Pause, Play, FolderOpen, ChevronDown, ChevronUp, Activity, Trash2, AlertCircle, Info } from 'lucide-react';
+import { Zap, Magnet, File, X, Pause, Play, FolderOpen, ChevronDown, ChevronUp, Activity, Trash2, AlertCircle, Info, RotateCw } from 'lucide-react';
 import { formatBytes, formatTime } from '../utils/format';
 import SpeedChart from './SpeedChart';
 
 export default function DownloadItem({ download }) {
-  const { stopDownload, pauseDownload, resumeDownload, removeDownload, highlightedDownloadId, setHighlightedDownloadId } = useDownloads();
+  const { stopDownload, pauseDownload, resumeDownload, removeDownload, retryDownload, highlightedDownloadId, setHighlightedDownloadId } = useDownloads();
   const [showChunks, setShowChunks] = useState(false);
   const [showFiles, setShowFiles] = useState(false);
   
@@ -136,7 +136,20 @@ export default function DownloadItem({ download }) {
               <Play className="w-4 h-4 theme-text-secondary" />
             </button>
           )}
-          {download.status !== 'completed' && download.status !== 'seeding' && download.status !== 'downloading' && download.status !== 'paused' && (
+          {download.status === 'error' && (
+            <button
+              onClick={(e) => { 
+                e.stopPropagation(); 
+                console.log('[DownloadItem] Retrying download:', download.id);
+                retryDownload(download.id); 
+              }}
+              className="p-1 hover:theme-bg-hover rounded transition-colors"
+              title="Retry download"
+            >
+              <RotateCw className="w-4 h-4 theme-text-secondary" />
+            </button>
+          )}
+          {download.status !== 'completed' && download.status !== 'seeding' && download.status !== 'downloading' && download.status !== 'paused' && download.status !== 'error' && (
             <button
               onClick={(e) => { e.stopPropagation(); stopDownload(download.id); }}
               className="p-1 hover:theme-bg-hover rounded transition-colors"

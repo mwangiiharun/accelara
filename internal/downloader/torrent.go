@@ -10,10 +10,10 @@ import (
 	"strings"
 	"time"
 
+	g "github.com/anacrolix/generics"
 	"github.com/anacrolix/torrent"
 	"github.com/anacrolix/torrent/metainfo"
 	"github.com/anacrolix/torrent/storage"
-	g "github.com/anacrolix/generics"
 	"golang.org/x/time/rate"
 )
 
@@ -183,13 +183,7 @@ func (d *TorrentDownloader) Download() error {
 		}
 	}
 
-	t.DownloadAll()
-	if d.sequential {
-		for _, f := range t.Files() {
-			f.SetPriority(torrent.PiecePriorityNow)
-		}
-	}
-
+	// Report that we're getting metadata (especially for magnet links)
 	if d.reporter != nil {
 		d.reporter.Report(map[string]interface{}{
 			"type":     "torrent",
@@ -198,11 +192,24 @@ func (d *TorrentDownloader) Download() error {
 		})
 	}
 
+	// CRITICAL: Wait for metadata BEFORE calling DownloadAll()
+	// For magnet links, metadata must be fetched first
+	// For torrent files, this will return immediately
 	<-t.GotInfo()
 
+	// Verify that info is available before proceeding
 	info := t.Info()
 	if info == nil {
-		return fmt.Errorf("failed to get torrent info")
+		return fmt.Errorf("failed to get torrent info after waiting for metadata")
+	}
+
+	// Now it's safe to call DownloadAll() since we have valid info
+	t.DownloadAll()
+	if d.sequential {
+		// Files() is safe to call after GotInfo()
+		for _, f := range t.Files() {
+			f.SetPriority(torrent.PiecePriorityNow)
+		}
 	}
 
 	// Check existing files and verify pieces before starting

@@ -1,6 +1,6 @@
 [package]
 name = "accelara"
-version = "3.0.2"
+version = "3.0.3"
 description = "ACCELARA - Unified HTTP + BitTorrent CLI Download Manager"
 authors = ["Mwangii Kinuthia"]
 license = "MIT"

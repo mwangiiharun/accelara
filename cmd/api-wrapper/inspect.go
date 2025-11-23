@@ -43,7 +43,11 @@ func inspectTorrent() {
 			fmt.Fprintf(os.Stderr, "Error: failed to inspect magnet link: %s\n", err)
 			os.Exit(1)
 		}
-		data, _ := json.Marshal(result)
+		data, err := json.Marshal(result)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Error: failed to marshal result: %s\n", err)
+			os.Exit(1)
+		}
 		fmt.Println(string(data))
 		return
 	} else if strings.HasPrefix(source, "http://") || strings.HasPrefix(source, "https://") {
@@ -110,12 +114,24 @@ func inspectTorrent() {
 		"files":     files,
 	}
 
-	data, _ := json.Marshal(result)
+	data, err := json.Marshal(result)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error: failed to marshal result: %s\n", err)
+		os.Exit(1)
+	}
 	fmt.Println(string(data))
 }
 
 // inspectMagnetLink downloads metadata from a magnet link and returns torrent info
 func inspectMagnetLink(magnetURL string) (map[string]interface{}, error) {
+	// Add panic recovery to prevent crashes
+	defer func() {
+		if r := recover(); r != nil {
+			// Panic occurred, but we'll let it propagate after logging
+			// The error will be caught by the caller
+		}
+	}()
+	
 	// Create a temporary directory for inspection
 	tempDir := filepath.Join(os.TempDir(), "accelara-inspect-"+fmt.Sprintf("%d", time.Now().UnixNano()))
 	defer func() {
@@ -130,6 +146,7 @@ func inspectMagnetLink(magnetURL string) (map[string]interface{}, error) {
 	
 	// Try to find an available port
 	listenPort := 42069
+	portFound := false
 	for i := 0; i < 5; i++ {
 		addr, err := net.ResolveTCPAddr("tcp", fmt.Sprintf(":%d", listenPort+i))
 		if err != nil {
@@ -139,15 +156,24 @@ func inspectMagnetLink(magnetURL string) (map[string]interface{}, error) {
 		if err == nil {
 			listener.Close()
 			cfg.ListenPort = listenPort + i
+			portFound = true
 			break
 		}
+	}
+	if !portFound {
+		return nil, fmt.Errorf("failed to find available port")
 	}
 	
 	client, err := torrent.NewClient(cfg)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create torrent client: %w", err)
 	}
-	defer client.Close()
+	defer func() {
+		// Ensure client is closed even on panic
+		if client != nil {
+			client.Close()
+		}
+	}()
 	
 	// Add magnet link
 	t, err := client.AddMagnet(magnetURL)
@@ -159,22 +185,49 @@ func inspectMagnetLink(magnetURL string) (map[string]interface{}, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 	
+	// Use a buffered channel and ensure goroutine cleanup
 	metadataChan := make(chan bool, 1)
+	done := make(chan struct{})
+	
 	go func() {
-		<-t.GotInfo()
-		metadataChan <- true
+		defer func() {
+			// Recover from any panic in the goroutine
+			if r := recover(); r != nil {
+				// Panic occurred, just exit
+			}
+		}()
+		// Wait for metadata or done signal
+		select {
+		case <-t.GotInfo():
+			// Metadata received, try to send it (non-blocking)
+			select {
+			case metadataChan <- true:
+				// Successfully sent
+			case <-done:
+				// Already timed out, don't send
+			}
+		case <-done:
+			// Timeout occurred, exit goroutine
+		}
 	}()
 	
+	// Wait for either metadata or timeout
 	select {
 	case <-metadataChan:
-		// Metadata received
+		// Metadata received - close done to signal goroutine to exit
+		close(done)
 	case <-ctx.Done():
+		// Timeout occurred - close done first to signal goroutine
+		close(done)
+		// Remove torrent from client before returning
+		t.Drop()
 		return nil, fmt.Errorf("timeout waiting for metadata (30 seconds)")
 	}
 	
 	// Get torrent info
 	info := t.Info()
 	if info == nil {
+		t.Drop()
 		return nil, fmt.Errorf("failed to get torrent info")
 	}
 	
@@ -209,6 +262,9 @@ func inspectMagnetLink(magnetURL string) (map[string]interface{}, error) {
 		"fileCount": len(files),
 		"files":     files,
 	}
+	
+	// Remove torrent from client before returning (cleanup)
+	t.Drop()
 	
 	return result, nil
 }

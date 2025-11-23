@@ -494,6 +494,142 @@ export function DownloadProvider({ children }) {
     }
   }, []);
 
+  const retryDownload = useCallback(async (downloadId) => {
+    if (!window.electronAPI) {
+      console.error('Electron API not available');
+      return;
+    }
+
+    // Find the download to retry
+    const download = downloads.find((d) => d.id === downloadId);
+    if (!download) {
+      console.error('Download not found:', downloadId);
+      return;
+    }
+
+    try {
+      // Update status to initializing
+      setDownloads((prev) => prev.map((d) => 
+        d.id === downloadId 
+          ? { ...d, status: 'initializing', error: null, message: null }
+          : d
+      ));
+
+      // For magnet links, re-inspect first
+      if (download.type === 'magnet' && download.source && download.source.startsWith('magnet:')) {
+        console.log('[DownloadContext] Re-inspecting magnet link before retry:', download.source);
+        
+        try {
+          // Re-inspect the magnet link
+          const torrentInfo = await window.electronAPI.inspectTorrent(download.source);
+          console.log('[DownloadContext] Re-inspection successful:', torrentInfo);
+          
+          // Update download with torrent info
+          setDownloads((prev) => prev.map((d) => 
+            d.id === downloadId 
+              ? { 
+                  ...d, 
+                  torrent_name: torrentInfo.name,
+                  total: torrentInfo.totalSize,
+                  fileCount: torrentInfo.fileCount,
+                  files: torrentInfo.files,
+                }
+              : d
+          ));
+        } catch (inspectError) {
+          console.warn('[DownloadContext] Re-inspection failed, continuing with retry:', inspectError);
+          // Continue with retry even if inspection fails
+        }
+      }
+
+      // Stop the old download first (if it's still running)
+      try {
+        await window.electronAPI.stopDownload(downloadId);
+      } catch (stopError) {
+        // Ignore errors when stopping (download might already be stopped)
+        console.log('[DownloadContext] Error stopping download (may already be stopped):', stopError);
+      }
+
+      // Remove the old download from the database
+      try {
+        await window.electronAPI.removeDownload(downloadId);
+      } catch (removeError) {
+        // Ignore errors when removing (download might not exist in DB)
+        console.log('[DownloadContext] Error removing download (may not exist):', removeError);
+      }
+
+      // Prepare options from existing download settings
+      const options = {
+        concurrency: download.concurrency || 8,
+        chunk_size: download.chunk_size || '4MB',
+        limit: download.limit || '',
+        bt_upload_limit: download.bt_upload_limit || '',
+        bt_sequential: download.bt_sequential || false,
+        bt_keep_seeding: download.bt_keep_seeding || false,
+        bt_port: download.bt_port || 42069,
+        connect_timeout: download.connect_timeout || 15,
+        read_timeout: download.read_timeout || 60,
+        retries: download.retries || 5,
+      };
+
+      // Add HTTP info if available
+      if (download.httpInfo) {
+        options.httpInfo = download.httpInfo;
+      }
+
+      // Remove the old download from state FIRST, before starting the new one
+      // This prevents duplicates when the updateHandler receives the new download
+      setDownloads((prev) => prev.filter((d) => d.id !== downloadId));
+
+      // Start a new download with the same source and output
+      const result = await window.electronAPI.startDownload({
+        source: download.source,
+        output: download.output,
+        options,
+      });
+
+      // Update highlighted download ID if the retried download was highlighted
+      setHighlightedDownloadId((current) => {
+        if (current === downloadId) {
+          return result.downloadId;
+        }
+        return current;
+      });
+
+      // Don't manually add the download here - let the updateHandler add it
+      // when it receives the first update event from the backend
+      // The updateHandler already checks for duplicates by ID (line 299)
+      // This prevents duplicates
+
+      // Auto-resume the new download
+      setTimeout(async () => {
+        try {
+          await window.electronAPI.resumeDownload(result.downloadId);
+          setDownloads((prev) => prev.map((d) => 
+            d.id === result.downloadId 
+              ? { ...d, status: 'downloading' }
+              : d
+          ));
+        } catch (resumeError) {
+          console.error('[DownloadContext] Failed to auto-resume retried download:', resumeError);
+          setDownloads((prev) => prev.map((d) => 
+            d.id === result.downloadId 
+              ? { ...d, status: 'error', error: resumeError.message || String(resumeError) }
+              : d
+          ));
+        }
+      }, 300);
+
+    } catch (error) {
+      console.error('[DownloadContext] Failed to retry download:', error);
+      setDownloads((prev) => prev.map((d) => 
+        d.id === downloadId 
+          ? { ...d, status: 'error', error: error.message || String(error) }
+          : d
+      ));
+    }
+  }, [downloads]);
+
   const clearHistory = useCallback(() => {
     setHistory([]);
   }, []);
@@ -509,7 +645,8 @@ export function DownloadProvider({ children }) {
       stopDownload, 
       pauseDownload, 
       resumeDownload, 
-      removeDownload, 
+      removeDownload,
+      retryDownload,
       clearHistory 
     }}>
       {children}
