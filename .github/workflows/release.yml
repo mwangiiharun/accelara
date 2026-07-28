@@ -363,11 +363,19 @@ jobs:
               
               # Remove quarantine attribute (if present)
               xattr -cr "$APP_BUNDLE" 2>/dev/null || echo "Warning: Could not remove quarantine attributes"
-              
+
+              # The main binary is already linker-signed (normal for Apple
+              # Silicon builds) - deep-signing on top of that without first
+              # removing it leaves the bundle with "Sealed Resources=none",
+              # which is exactly what causes "damaged and can't be opened".
+              # Strip it first so the deep sign below actually reseals
+              # everything from scratch.
+              codesign --remove-signature "$APP_BUNDLE/Contents/MacOS/"* 2>/dev/null || echo "Warning: Could not remove existing signature"
+
               # Ad-hoc code sign the app bundle (doesn't require a certificate)
               # This makes Gatekeeper happier even without a developer certificate
               codesign --force --deep --sign - "$APP_BUNDLE" 2>/dev/null || echo "Warning: Could not code sign app bundle"
-              
+
               # Verify the signature
               codesign --verify --verbose "$APP_BUNDLE" 2>/dev/null || echo "Warning: Code signature verification failed"
               

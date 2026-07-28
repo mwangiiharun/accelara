@@ -141,11 +141,18 @@ if [ -n "$MOUNT_POINT" ] && [ -d "$MOUNT_POINT" ]; then
         
         # Remove quarantine attribute (if present)
         xattr -cr "$TEMP_APP_BUNDLE" 2>/dev/null || echo -e "${YELLOW}Warning: Could not remove quarantine attributes${NC}"
-        
+
+        # The main binary is already linker-signed (normal for Apple Silicon
+        # builds) - deep-signing on top of that without removing it first
+        # leaves the bundle with "Sealed Resources=none", which is exactly
+        # what causes "damaged and can't be opened". Strip it first so the
+        # deep sign below actually reseals everything from scratch.
+        codesign --remove-signature "$TEMP_APP_BUNDLE/Contents/MacOS/"* 2>/dev/null || echo -e "${YELLOW}Warning: Could not remove existing signature${NC}"
+
         # Ad-hoc code sign the app bundle (doesn't require a certificate)
         # This makes Gatekeeper happier even without a developer certificate
         codesign --force --deep --sign - "$TEMP_APP_BUNDLE" 2>/dev/null || echo -e "${YELLOW}Warning: Could not code sign app bundle${NC}"
-        
+
         # Verify the signature
         codesign --verify --verbose "$TEMP_APP_BUNDLE" 2>/dev/null || echo -e "${YELLOW}Warning: Code signature verification failed${NC}"
         
