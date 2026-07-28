@@ -5,7 +5,17 @@
 
 const QUALITY_TAGS = /\b(1080p|720p|2160p|480p|4k|uhd|hdr|10bit|8bit|x264|x265|h264|h265|hevc|avc|web-?dl|webrip|web|bluray|blu-ray|brrip|bdrip|dvdrip|hdtv|hdrip|camrip|amzn|nf|hulu|dsnp|atvp|remux|proper|repack|extended|unrated|directors?\.?cut|multi|dual\s?audio|aac\d?|ac3|dts(-hd)?|5\.1|7\.1)\b/gi;
 
-const EXTENSIONS = /\.(mkv|mp4|avi|mov|wmv|torrent|zip|rar|7z)$/i;
+// Strip a trailing file extension generically (rather than a hardcoded
+// list) so unusual extensions (.iso, .exe, .epub, ...) don't get left
+// dangling as a stray word. Requires at least one letter in the candidate
+// so a numeric version segment like "24.04" is never mistaken for one.
+function stripExtension(name) {
+  const m = name.match(/\.([A-Za-z0-9]{1,5})$/);
+  if (m && /[A-Za-z]/.test(m[1])) {
+    return name.slice(0, -m[0].length);
+  }
+  return name;
+}
 
 function cleanTitle(raw) {
   return raw
@@ -28,7 +38,7 @@ export function detectMediaType(rawName) {
   }
 
   let name = rawName.split('/').pop().split('\\').pop();
-  name = name.replace(EXTENSIONS, '');
+  name = stripExtension(name);
   name = name.replace(/[._]/g, ' ').trim();
 
   // TV: "Show Name S01E02"
@@ -59,22 +69,51 @@ export function detectMediaType(rawName) {
 }
 
 /**
- * Build a Plex-friendly destination folder from a detection result and the
- * user's configured library roots. Falls back to defaultPath when the type
- * is unknown or a required root isn't configured.
+ * True if a name has a real file extension (e.g. "movie.mkv" -> true,
+ * "Ubuntu.Server.24.04.Complete" -> false, ".gitignore" -> false).
  */
-export function buildLibraryPath(detected, { tvShowsPath, moviesPath, defaultPath }) {
+export function hasExtension(name) {
+  if (!name) return false;
+  const base = name.split('/').pop().split('\\').pop();
+  const idx = base.lastIndexOf('.');
+  return idx > 0 && idx < base.length - 1;
+}
+
+/**
+ * Build a Plex-friendly destination for a detection result and the user's
+ * configured library roots.
+ *
+ * When the item isn't sorted into a TV/movie library (unknown type, "Other",
+ * or the relevant library path isn't configured), it still doesn't get
+ * dumped loose into the default download folder as long as it looks like a
+ * single file (has an extension) - it gets its own same-named folder
+ * instead, same as a multi-file torrent already would. An extensionless
+ * name is left as-is, since that already looks like a directory/self-
+ * contained item (e.g. a multi-file torrent's release folder name).
+ *
+ * `opts.rawName` is the original file/torrent name, used only to decide
+ * whether to wrap and to derive the wrapper folder's name.
+ * `opts.fileName`, if given, is appended to the result - use this for HTTP
+ * downloads where the output must be a full file path; omit it for
+ * torrents, where the output is just the destination directory and the Go
+ * downloader appends the torrent's own name itself.
+ */
+export function buildLibraryPath(detected, { tvShowsPath, moviesPath, defaultPath }, opts = {}) {
+  const { rawName, fileName } = opts;
   const title = detected.title || 'Unknown';
+  let folder;
 
   if (detected.type === 'tv' && tvShowsPath) {
     const seasonFolder = detected.season ? `Season ${String(detected.season).padStart(2, '0')}` : null;
-    return seasonFolder ? `${tvShowsPath}/${title}/${seasonFolder}` : `${tvShowsPath}/${title}`;
-  }
-
-  if (detected.type === 'movie' && moviesPath) {
+    folder = seasonFolder ? `${tvShowsPath}/${title}/${seasonFolder}` : `${tvShowsPath}/${title}`;
+  } else if (detected.type === 'movie' && moviesPath) {
     const folderName = detected.year ? `${title} (${detected.year})` : title;
-    return `${moviesPath}/${folderName}`;
+    folder = `${moviesPath}/${folderName}`;
+  } else if (hasExtension(rawName)) {
+    folder = `${defaultPath}/${title}`;
+  } else {
+    folder = defaultPath;
   }
 
-  return defaultPath;
+  return fileName ? `${folder}/${fileName}` : folder;
 }

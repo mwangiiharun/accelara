@@ -18,13 +18,17 @@ export default function AddDownloadModal({ onClose, initialSource = '', autoStar
   const [downloadId, setDownloadId] = useState(null);
   const [detected, setDetected] = useState(null); // { type: 'tv'|'movie'|'unknown', title, year, season, episode }
   const [mediaChoice, setMediaChoice] = useState(null); // manual override: 'tv' | 'movie' | 'other' | null
+  const [sourceNameInfo, setSourceNameInfo] = useState(null); // { rawName, isHttp }
 
-  const applyDetectedOutput = (detectedResult, choice) => {
+  const applyDetectedOutput = (detectedResult, choice, nameInfo = sourceNameInfo) => {
     const defaultPath = settings.defaultDownloadPath || (typeof require !== 'undefined' ? require('os').homedir() + '/Downloads' : '~/Downloads');
     const effectiveType = choice === 'other' ? 'unknown' : (choice || detectedResult.type);
     const path = buildLibraryPath(
       { ...detectedResult, type: effectiveType },
-      { tvShowsPath: settings.tvShowsPath, moviesPath: settings.moviesPath, defaultPath }
+      { tvShowsPath: settings.tvShowsPath, moviesPath: settings.moviesPath, defaultPath },
+      nameInfo
+        ? { rawName: nameInfo.rawName, fileName: nameInfo.isHttp ? nameInfo.rawName : undefined }
+        : {}
     );
     setOutput(path);
   };
@@ -90,8 +94,10 @@ export default function AddDownloadModal({ onClose, initialSource = '', autoStar
             setInspectError(null);
             if (info.name) {
               const d = detectMediaType(info.name);
+              const nameInfo = { rawName: info.name, isHttp: false };
               setDetected(d);
-              applyDetectedOutput(d, null);
+              setSourceNameInfo(nameInfo);
+              applyDetectedOutput(d, null, nameInfo);
             }
           } catch (error) {
             console.error('Torrent inspection error:', error);
@@ -112,15 +118,10 @@ export default function AddDownloadModal({ onClose, initialSource = '', autoStar
           setHttpInfo(info);
           if (info.fileName) {
             const d = detectMediaType(info.fileName);
+            const nameInfo = { rawName: info.fileName, isHttp: true };
             setDetected(d);
-            const defaultPath = settings.defaultDownloadPath || (typeof require !== 'undefined' ? require('os').homedir() + '/Downloads' : '~/Downloads');
-            if (d.type === 'unknown') {
-              // HTTP files are usually single files, not a library folder -
-              // keep the existing behavior of appending the filename.
-              setOutput(defaultPath + '/' + info.fileName);
-            } else {
-              applyDetectedOutput(d, null);
-            }
+            setSourceNameInfo(nameInfo);
+            applyDetectedOutput(d, null, nameInfo);
           }
         }
       } catch (error) {

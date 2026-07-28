@@ -65,14 +65,21 @@ func NewTorrentDownloader(source, outPath string, opts Options) *TorrentDownload
 func (d *TorrentDownloader) Download() error {
 	cfg := torrent.NewDefaultClientConfig()
 	var dataDir string
-	if info, err := os.Stat(d.outPath); err == nil && info.IsDir() {
-		dataDir = d.outPath
-		cfg.DataDir = d.outPath
-	} else {
+	if info, err := os.Stat(d.outPath); err == nil && !info.IsDir() {
+		// outPath points at an existing file (unusual for a torrent destination) -
+		// fall back to its parent directory.
 		dataDir = filepath.Dir(d.outPath)
-		cfg.DataDir = dataDir
+	} else {
+		// outPath is the intended destination directory - create it if it
+		// doesn't exist yet (a brand-new download folder, e.g. a fresh
+		// per-item wrapper folder, won't exist on the first run).
+		dataDir = d.outPath
+		if err := os.MkdirAll(dataDir, 0755); err != nil {
+			return fmt.Errorf("failed to create output directory %s: %w", dataDir, err)
+		}
 	}
-	
+	cfg.DataDir = dataDir
+
 	// Configure storage to NOT use .part extensions for incomplete files
 	// Files should be written directly to their final names
 	cfg.DefaultStorage = storage.NewFileOpts(storage.NewFileClientOpts{
