@@ -488,7 +488,7 @@ export default function SpeedTest() {
               </div>
               {liveLatencyHistory.length > 0 && (
                 <div className="mt-6">
-                  <SpeedChart title="Live Latency" data={liveLatencyHistory} color="#f59e0b" format="number" height={180} />
+                  <SpeedChart title="Live Latency" data={liveLatencyHistory} color="#f59e0b" format="ms" height={180} />
                 </div>
               )}
             </div>
@@ -517,6 +517,7 @@ export default function SpeedTest() {
                         value: bytesPerSecToMbps(result.downloadSpeed), // Convert to Mbps
                       }))}
                     color="#0ea5e9"
+                    format="mbps"
                   />
                 )}
                 {history.some(h => h.uploadSpeed && h.uploadSpeed > 0) && (
@@ -528,6 +529,7 @@ export default function SpeedTest() {
                         value: bytesPerSecToMbps(result.uploadSpeed), // Convert to Mbps
                       }))}
                     color="#10b981"
+                    format="mbps"
                   />
                 )}
               </div>
@@ -541,7 +543,7 @@ export default function SpeedTest() {
                         value: result.latency.average,
                       }))}
                     color="#f59e0b"
-                    format="number"
+                    format="ms"
                   />
                 </div>
               )}

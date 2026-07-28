@@ -6,7 +6,14 @@ export default function SpeedChart({ title, data, color = '#0ea5e9', height = 20
       // Format as plain number (for Peers, Seeds, etc.)
       return Math.round(value).toString();
     }
-    // Format as bytes (default)
+    if (format === 'mbps') {
+      // Already in megabits/sec - don't run it through the byte-scaling ladder
+      return `${value.toFixed(1)} Mbps`;
+    }
+    if (format === 'ms') {
+      return `${Math.round(value)} ms`;
+    }
+    // Format as bytes/sec (default) - scales all the way up to GB
     if (value === 0) return '0 B';
     const units = ['B', 'KB', 'MB', 'GB'];
     let unitIndex = 0;

@@ -39,7 +39,14 @@ const (
 
 	// Cloudflare's public speed-test endpoints - built for exactly this,
 	// no auth, no rate limiting for a single client.
-	cfDownloadURL = "https://speed.cloudflare.com/__down?bytes=209715200" // 200MB cap
+	//
+	// NOTE: __down silently caps out somewhere between 50MB and 100MB - ask
+	// for more than its real limit and it returns a ~1-byte body instead of
+	// an error, which used to make every "download" phase read tanked to
+	// a few bytes/sec (constant reconnect-on-EOF, never any real data).
+	// 50MB is confirmed to work reliably; runDownloadPhase re-fetches a
+	// fresh one whenever a chunk is exhausted before the time budget.
+	cfDownloadURL = "https://speed.cloudflare.com/__down?bytes=52428800" // 50MB, safely under the cap
 	cfUploadURL   = "https://speed.cloudflare.com/__up"
 	cfPingURL     = "https://speed.cloudflare.com/__down?bytes=0"
 )
