@@ -102,6 +102,10 @@ pub fn find_go_binary() -> Option<PathBuf> {
     None
 }
 
+/// Iris is bundled as a standalone tool but the in-app Speed Test tab no
+/// longer shells out to it (it does its own live HTTP-based measurement
+/// instead). Kept for potential direct/CLI use of the bundled binary.
+#[allow(dead_code)]
 pub fn find_iris_binary() -> Option<PathBuf> {
     use crate::logger;
     // Try to find iris binary

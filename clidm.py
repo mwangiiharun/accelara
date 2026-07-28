@@ -3,15 +3,15 @@
 clidm — unified HTTP + BitTorrent CLI download manager
 -------------------------------------------------------
 Supports:
-  ✅ HTTP/HTTPS (segmented)
-  ✅ Magnet links
-  ✅ .torrent files (local or remote URLs)
-  ✅ Resume support
-  ✅ Rate limiting
-  ✅ Sequential mode for torrents
-  ✅ Upload/download limits for BitTorrent
-  ✅ SHA256 verification (HTTP)
-  ✅ Cross-platform libtorrent detection
+  - HTTP/HTTPS (segmented)
+  - Magnet links
+  - .torrent files (local or remote URLs)
+  - Resume support
+  - Rate limiting
+  - Sequential mode for torrents
+  - Upload/download limits for BitTorrent
+  - SHA256 verification (HTTP)
+  - Cross-platform libtorrent detection
 
 To install dependencies:
   pip install -r requirements.txt

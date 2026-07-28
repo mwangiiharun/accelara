@@ -10,8 +10,8 @@ PROJECT_ROOT="$( cd "$SCRIPT_DIR/.." && pwd )"
 # Change to project root
 cd "$PROJECT_ROOT"
 
-echo "🚀 Starting release process for v${VERSION}..."
-echo "📁 Working directory: $PROJECT_ROOT"
+echo "Starting release process for v${VERSION}..."
+echo "Working directory: $PROJECT_ROOT"
 
 # Check if we're on main branch
 BRANCH=$(git branch --show-current)
@@ -26,7 +26,7 @@ fi
 
 # Check for uncommitted changes
 if ! git diff-index --quiet HEAD --; then
-    echo "📝 Staging changes..."
+    echo "Staging changes..."
     git add package.json src-tauri/Cargo.toml src-tauri/tauri.conf.json \
         cmd/api-wrapper/inspect.go internal/downloader/torrent.go \
         src/context/DownloadContext.jsx src/components/DownloadItem.jsx \
@@ -34,7 +34,7 @@ if ! git diff-index --quiet HEAD --; then
 fi
 
 # Commit changes
-echo "💾 Committing version bump..."
+echo "Committing version bump..."
 git commit -m "Release v${VERSION}: Fix magnet torrent inspection crashes and add retry functionality
 
 - Fix nil pointer dereference in torrent downloader when calling DownloadAll() before metadata is loaded
@@ -45,7 +45,7 @@ git commit -m "Release v${VERSION}: Fix magnet torrent inspection crashes and ad
 - Improve error handling and user feedback for magnet link inspection" || echo "No changes to commit or already committed"
 
 # Create tag
-echo "🏷️  Creating tag v${VERSION}..."
+echo "️  Creating tag v${VERSION}..."
 git tag -a "v${VERSION}" -m "Release v${VERSION}
 
 Bug Fixes:
@@ -59,12 +59,12 @@ Features:
 - Improved error handling for torrent inspection" || echo "Tag may already exist"
 
 # Push to GitHub
-echo "📤 Pushing to GitHub..."
+echo "Pushing to GitHub..."
 git push origin main
 git push origin "v${VERSION}"
 
 echo "✅ Release v${VERSION} completed successfully!"
-echo "📋 Next steps:"
+echo "Next steps:"
 echo "   1. Go to GitHub and create a release from the v${VERSION} tag"
 echo "   2. Add release notes describing the changes"
 echo "   3. Build and attach binaries for the release"

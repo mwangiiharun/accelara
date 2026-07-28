@@ -7,7 +7,7 @@ export default function AboutModal({ onClose }) {
   const [isDownloading, setIsDownloading] = useState(false);
   const [downloadProgress, setDownloadProgress] = useState(0);
   const [downloadPath, setDownloadPath] = useState(null);
-  const [currentVersion] = useState('3.0.0'); // This should match package.json version
+  const [currentVersion] = useState('3.1.0'); // This should match package.json version
   
   // Listen for update-available events from background checks
   useEffect(() => {
@@ -145,10 +145,13 @@ export default function AboutModal({ onClose }) {
   }
 
   return (
-    <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
-      <div className="theme-bg-secondary rounded-lg p-6 w-full max-w-2xl border theme-border max-h-[90vh] overflow-y-auto">
+    <div className="fixed inset-0 bg-black/50 backdrop-blur-sm flex items-center justify-center z-50 animate-backdrop-in">
+      <div className="vibrancy rounded-2xl p-6 w-full max-w-2xl border theme-border shadow-soft-lg max-h-[90vh] overflow-y-auto animate-modal-in">
         <div className="flex items-center justify-between mb-4">
-          <h2 className="text-2xl font-semibold theme-text-primary">About ACCELARA</h2>
+          <div className="flex items-center gap-3">
+            <img src="/logo.svg" alt="ACCELARA" className="w-9 h-9 rounded-[0.45rem] shadow-soft" />
+            <h2 className="text-2xl font-semibold tracking-tight theme-text-primary">About ACCELARA</h2>
+          </div>
           <button
             onClick={onClose}
             className="theme-text-secondary hover:theme-text-primary transition-colors"

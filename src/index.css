@@ -40,47 +40,55 @@ html, body, #root {
     min-height: 100vh;
   }
   
-  /* True Dark Theme (Black/Dark Gray) */
+  /* Dark Theme - macOS-style vibrancy grays instead of flat black */
   .theme-dark {
-    --bg-primary: #000000;
-    --bg-secondary: #0a0a0a;
-    --bg-tertiary: #141414;
-    --bg-hover: #1a1a1a;
-    --border: #1f1f1f;
+    --bg-primary: #1c1c1e;
+    --bg-secondary: #242426;
+    --bg-tertiary: #2c2c2e;
+    --bg-hover: #3a3a3c;
+    --bg-secondary-rgb: 36, 36, 38;
+    --border: #38383a;
     --text-primary: #ffffff;
-    --text-secondary: #a0a0a0;
-    --text-tertiary: #666666;
+    --text-secondary: #a1a1a6;
+    --text-tertiary: #8e8e93;
+    --shadow-color: 0, 0, 0;
   }
-  
-  /* Light Theme */
+
+  /* Light Theme - macOS systemGray scale */
   .theme-light {
     --bg-primary: #ffffff;
-    --bg-secondary: #f5f5f5;
-    --bg-tertiary: #e5e5e5;
-    --bg-hover: #e0e0e0;
-    --border: #d0d0d0;
-    --text-primary: #1a1a1a;
-    --text-secondary: #4a4a4a;
-    --text-tertiary: #6b6b6b;
+    --bg-secondary: #f2f2f7;
+    --bg-tertiary: #e5e5ea;
+    --bg-hover: #d1d1d6;
+    --bg-secondary-rgb: 242, 242, 247;
+    --border: #d1d1d6;
+    --text-primary: #1d1d1f;
+    --text-secondary: #6e6e73;
+    --text-tertiary: #8e8e93;
+    --shadow-color: 60, 60, 67;
   }
-  
+
   /* Cyan Theme */
   .theme-cyan {
     --bg-primary: #001a1a;
     --bg-secondary: #002626;
     --bg-tertiary: #003333;
     --bg-hover: #004040;
+    --bg-secondary-rgb: 0, 38, 38;
     --border: #005555;
     --text-primary: #00ffff;
     --text-secondary: #00cccc;
     --text-tertiary: #009999;
+    --shadow-color: 0, 0, 0;
   }
-  
+
   body {
     background-color: var(--bg-primary) !important;
     color: var(--text-primary) !important;
+    font-family: -apple-system, BlinkMacSystemFont, "SF Pro Display", "SF Pro Text", "Helvetica Neue", Helvetica, Arial, sans-serif;
+    -webkit-font-smoothing: antialiased;
   }
-  
+
   .theme-container {
     background-color: var(--bg-primary);
     color: var(--text-primary);
@@ -91,55 +99,73 @@ html, body, #root {
   .card {
     background-color: var(--bg-secondary);
     border: 1px solid var(--border);
-    border-radius: 0.5rem;
+    border-radius: 1rem;
     padding: 1rem;
-    box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1);
+    box-shadow: 0 1px 2px rgba(var(--shadow-color), 0.06), 0 8px 24px -4px rgba(var(--shadow-color), 0.12);
   }
-  
+
   .btn-primary {
-    background-color: #0284c7;
+    background-color: #0A84FF;
     color: white;
-    font-weight: 500;
-    padding: 0.5rem 1rem;
-    border-radius: 0.5rem;
-    transition: background-color 0.2s;
+    font-weight: 590;
+    padding: 0.5rem 1.125rem;
+    border-radius: 0.75rem;
+    transition: background-color 0.15s ease, transform 0.15s cubic-bezier(0.34, 1.56, 0.64, 1);
   }
-  
+
   .btn-primary:hover {
-    background-color: #0369a1;
+    background-color: #0071e3;
+    transform: scale(1.03);
   }
-  
+
+  .btn-primary:active {
+    transform: scale(0.96);
+  }
+
   .btn-secondary {
     background-color: var(--bg-tertiary);
     color: var(--text-primary);
-    font-weight: 500;
-    padding: 0.5rem 1rem;
-    border-radius: 0.5rem;
-    transition: background-color 0.2s;
+    font-weight: 590;
+    padding: 0.5rem 1.125rem;
+    border-radius: 0.75rem;
+    transition: background-color 0.15s ease, transform 0.15s cubic-bezier(0.34, 1.56, 0.64, 1);
   }
-  
+
   .btn-secondary:hover {
     background-color: var(--bg-hover);
+    transform: scale(1.03);
   }
-  
+
+  .btn-secondary:active {
+    transform: scale(0.96);
+  }
+
   .input-field {
     background-color: var(--bg-tertiary);
     border: 1px solid var(--border);
-    border-radius: 0.5rem;
+    border-radius: 0.75rem;
     padding: 0.5rem 0.75rem;
     color: var(--text-primary);
+    transition: border-color 0.15s ease, box-shadow 0.15s ease;
   }
-  
+
   .input-field::placeholder {
     color: var(--text-tertiary);
   }
-  
+
   .input-field:focus {
     outline: none;
-    ring: 2px;
-    ring-color: #0284c7;
+    border-color: #0A84FF;
+    box-shadow: 0 0 0 3px rgba(10, 132, 255, 0.25);
   }
-  
+
+  /* Translucent "vibrancy" panel, macOS-style frosted glass */
+  .vibrancy {
+    background-color: rgba(var(--bg-secondary-rgb), 0.72);
+    backdrop-filter: blur(20px) saturate(180%);
+    -webkit-backdrop-filter: blur(20px) saturate(180%);
+  }
+
   /* Theme utility classes */
   .theme-bg-primary {
     background-color: var(--bg-primary);
@@ -186,4 +212,52 @@ html, body, #root {
 
 .animate-shimmer {
   animation: shimmer 2s infinite;
+}
+
+@keyframes backdropIn {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+.animate-backdrop-in {
+  animation: backdropIn 0.2s ease-out;
+}
+
+@keyframes modalIn {
+  from { opacity: 0; transform: scale(0.94) translateY(8px); }
+  to { opacity: 1; transform: scale(1) translateY(0); }
+}
+.animate-modal-in {
+  animation: modalIn 0.28s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+@keyframes fadeInUp {
+  from { opacity: 0; transform: translateY(10px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+.animate-fade-in-up {
+  animation: fadeInUp 0.3s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+@keyframes logoPop {
+  from { opacity: 0; transform: scale(0.6) rotate(-10deg); }
+  to { opacity: 1; transform: scale(1) rotate(0deg); }
+}
+.animate-logo-pop {
+  animation: logoPop 0.55s cubic-bezier(0.34, 1.56, 0.64, 1);
+}
+
+@keyframes pulseDot {
+  0%, 100% { opacity: 1; transform: scale(1); }
+  50% { opacity: 0.45; transform: scale(0.85); }
+}
+.animate-pulse-dot {
+  animation: pulseDot 1.6s ease-in-out infinite;
+}
+
+@keyframes toastIn {
+  from { opacity: 0; transform: translateY(-16px) scale(0.95); }
+  to { opacity: 1; transform: translateY(0) scale(1); }
+}
+.animate-toast-in {
+  animation: toastIn 0.4s cubic-bezier(0.34, 1.56, 0.64, 1);
 }

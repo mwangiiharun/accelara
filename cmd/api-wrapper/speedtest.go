@@ -1,23 +1,24 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
+	"io"
+	"math"
+	"net/http"
 	"os"
-	"os/exec"
-	"path/filepath"
-	"runtime"
-	"strings"
+	"sync/atomic"
 	"time"
 )
 
 type SpeedTestResult struct {
-	Type          string        `json:"type"`
-	DownloadSpeed float64       `json:"download_speed,omitempty"` // bytes per second
-	UploadSpeed   float64       `json:"upload_speed,omitempty"`   // bytes per second
+	Type          string         `json:"type"`
+	DownloadSpeed float64        `json:"download_speed,omitempty"` // bytes per second
+	UploadSpeed   float64        `json:"upload_speed,omitempty"`   // bytes per second
 	Latency       *LatencyResult `json:"latency,omitempty"`
-	Progress      float64       `json:"progress,omitempty"`
-	Status        string        `json:"status"`
+	Progress      float64        `json:"progress,omitempty"`
+	Status        string         `json:"status"`
 }
 
 type LatencyResult struct {
@@ -27,357 +28,271 @@ type LatencyResult struct {
 	GooglePing int `json:"google_ping,omitempty"`
 }
 
-// IrisResult represents the JSON output from Iris
-type IrisResult struct {
-	Timestamp    string  `json:"timestamp"`
-	DownloadMbps float64 `json:"download_mbps"`
-	UploadMbps   float64 `json:"upload_mbps"`
-	PingMs       float64 `json:"ping_ms"`
-	Server       string  `json:"server"`
-	ISP          string  `json:"isp"`
-	Location     struct {
-		City    string `json:"city"`
-		Country string `json:"country"`
-		IP      string `json:"ip"`
-	} `json:"location"`
-	Rating string `json:"rating"`
+// mbpsToBytesPerSec converts megabits/sec to bytes/sec: 1 Mbps is 1,000,000
+// bits/sec, and there are 8 bits per byte.
+func mbpsToBytesPerSec(mbps float64) float64 {
+	return mbps * 1_000_000 / 8
 }
 
+const (
+	sampleInterval = 250 * time.Millisecond
+
+	// Cloudflare's public speed-test endpoints - built for exactly this,
+	// no auth, no rate limiting for a single client.
+	cfDownloadURL = "https://speed.cloudflare.com/__down?bytes=209715200" // 200MB cap
+	cfUploadURL   = "https://speed.cloudflare.com/__up"
+	cfPingURL     = "https://speed.cloudflare.com/__down?bytes=0"
+)
+
+// runSpeedTestWithType runs a real, actively-measured speed test for
+// ~30 seconds total (full test): live latency samples, then live download
+// throughput samples, then live upload throughput samples. Every sample is
+// streamed immediately over stdout so the UI can chart real variation, not
+// a simulated progress bar.
 func runSpeedTestWithType(testType string) {
 	if testType == "" {
 		testType = "full"
 	}
 
-	// Find Iris binary
-	irisPath, err := findIrisBinary()
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "Error: Iris not found: %v\n", err)
-		fmt.Fprintf(os.Stderr, "Please install Iris: brew tap mwangiiharun/homebrew-iris && brew install iris\n")
-		os.Exit(1)
-	}
-
-	// Run Iris with JSON output
-	cmd := exec.Command(irisPath, "--json", "--quiet")
-	cmd.Stderr = os.Stderr
-
-	// Start progress simulation in a goroutine
-	progressDone := make(chan bool)
-	go func() {
-		simulateProgressForTestType(testType, progressDone)
-	}()
-
-	// Start the command
-	startTime := time.Now()
-	output, err := cmd.Output()
-	elapsed := time.Since(startTime)
-
-	// Stop progress simulation
-	close(progressDone)
-	time.Sleep(100 * time.Millisecond) // Give progress goroutine time to stop
-
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "Error running Iris: %v\n", err)
-		os.Exit(1)
-	}
-
-	// Parse Iris JSON output
-	var irisResult IrisResult
-	if err := json.Unmarshal(output, &irisResult); err != nil {
-		// Try to find JSON in the output (in case there's extra text)
-		lines := strings.Split(string(output), "\n")
-		for _, line := range lines {
-			line = strings.TrimSpace(line)
-			if strings.HasPrefix(line, "{") && strings.HasSuffix(line, "}") {
-				if err := json.Unmarshal([]byte(line), &irisResult); err == nil {
-					break
-				}
-			}
-		}
-		// If still no valid JSON, report error
-		if irisResult.DownloadMbps == 0 && irisResult.UploadMbps == 0 && irisResult.PingMs == 0 {
-			fmt.Fprintf(os.Stderr, "Error: Failed to parse Iris output\n")
-			fmt.Fprintf(os.Stderr, "Output: %s\n", string(output))
-			os.Exit(1)
-		}
-	}
-
-	// Convert Iris results to ACCELARA format based on test type
 	switch testType {
 	case "latency":
-		reportLatencyFromIris(irisResult, elapsed)
+		runLatencyPhase(8*time.Second, 0, 100)
 	case "download":
-		reportDownloadFromIris(irisResult, elapsed)
+		runDownloadPhase(12*time.Second, 0, 100)
 	case "upload":
-		reportUploadFromIris(irisResult, elapsed)
+		runUploadPhase(12*time.Second, 0, 100)
 	case "full":
-		reportFullFromIris(irisResult, elapsed)
+		latency := runLatencyPhase(5*time.Second, 0, 33)
+		download := runDownloadPhase(12*time.Second, 33, 33)
+		upload := runUploadPhase(12*time.Second, 66, 34)
+		reportSpeedTestResult(SpeedTestResult{
+			Type:          "full",
+			Status:        "completed",
+			DownloadSpeed: download,
+			UploadSpeed:   upload,
+			Latency:       latency,
+			Progress:      100.0,
+		})
 	default:
 		fmt.Fprintf(os.Stderr, "Error: invalid test type: %s\n", testType)
 		os.Exit(1)
 	}
 }
 
-func reportLatencyFromIris(iris IrisResult, elapsed time.Duration) {
-	// Convert ping_ms to latency result
-	pingMs := int(iris.PingMs)
-	result := SpeedTestResult{
-		Type:   "latency",
-		Status: "completed",
-		Latency: &LatencyResult{
-			Average:    pingMs,
-			Min:        pingMs, // Iris only provides average ping
-			Max:        pingMs,
-			GooglePing: pingMs, // Use same value for Google ping
-		},
-		Progress: 33.0,
-	}
-	reportSpeedTestResult(result)
+func progressAt(base, rng float64, elapsed, total time.Duration) float64 {
+	frac := math.Min(float64(elapsed)/float64(total), 1.0)
+	return base + rng*frac
 }
 
-func reportDownloadFromIris(iris IrisResult, elapsed time.Duration) {
-	// Convert MB/s to bytes/s, then divide by 10
-	downloadBytesPerSec := (iris.DownloadMbps * 1024 * 1024) / 10
+// runLatencyPhase measures real round-trip time to a reliable endpoint,
+// repeatedly, for the given duration, streaming each sample live.
+func runLatencyPhase(duration time.Duration, base, rng float64) *LatencyResult {
+	client := &http.Client{Timeout: 5 * time.Second}
+	var samples []int
+	start := time.Now()
 
-	result := SpeedTestResult{
-		Type:          "download",
-		Status:        "completed",
-		DownloadSpeed: downloadBytesPerSec,
-		Progress:      66.0,
-	}
-	reportSpeedTestResult(result)
-}
-
-func reportUploadFromIris(iris IrisResult, elapsed time.Duration) {
-	// Convert MB/s to bytes/s, then divide by 10
-	uploadBytesPerSec := (iris.UploadMbps * 1024 * 1024) / 10
-
-	result := SpeedTestResult{
-		Type:        "upload",
-		Status:      "completed",
-		UploadSpeed: uploadBytesPerSec,
-		Progress:    100.0,
-	}
-	reportSpeedTestResult(result)
-}
-
-func reportFullFromIris(iris IrisResult, elapsed time.Duration) {
-	// Report latency
-	pingMs := int(iris.PingMs)
-	latencyResult := SpeedTestResult{
-		Type:   "latency",
-		Status: "completed",
-		Latency: &LatencyResult{
-			Average:    pingMs,
-			Min:        pingMs,
-			Max:        pingMs,
-			GooglePing: pingMs,
-		},
-		Progress: 33.0,
-	}
-	reportSpeedTestResult(latencyResult)
-
-	// Report download
-	downloadBytesPerSec := (iris.DownloadMbps * 1024 * 1024) / 10
-	downloadResult := SpeedTestResult{
-		Type:          "download",
-		Status:        "completed",
-		DownloadSpeed: downloadBytesPerSec,
-		Progress:      66.0,
-	}
-	reportSpeedTestResult(downloadResult)
-
-	// Report upload
-	uploadBytesPerSec := (iris.UploadMbps * 1024 * 1024) / 10
-	uploadResult := SpeedTestResult{
-		Type:        "upload",
-		Status:      "completed",
-		UploadSpeed: uploadBytesPerSec,
-		Progress:    100.0,
-	}
-	reportSpeedTestResult(uploadResult)
-}
-
-// simulateProgressForTestType sends progress updates during the test based on test type
-func simulateProgressForTestType(testType string, done chan bool) {
-	var startProgress, endProgress float64
-	var estimatedDuration time.Duration
-
-	switch testType {
-	case "latency":
-		startProgress = 0
-		endProgress = 33.0
-		estimatedDuration = 5 * time.Second
-	case "download":
-		startProgress = 33.0
-		endProgress = 66.0
-		estimatedDuration = 15 * time.Second
-	case "upload":
-		startProgress = 66.0
-		endProgress = 100.0
-		estimatedDuration = 15 * time.Second
-	case "full":
-		// For full test, simulate all phases
-		simulateFullTestProgress(done)
-		return
-	default:
-		return
-	}
-
-	updateInterval := 200 * time.Millisecond
-	progressRange := endProgress - startProgress
-	steps := int(estimatedDuration / updateInterval)
-	if steps < 1 {
-		steps = 1
-	}
-	progressIncrement := progressRange / float64(steps)
-
-	currentProgress := startProgress
-	startTime := time.Now()
-
-	for {
-		select {
-		case <-done:
-			return
-		default:
-			elapsed := time.Since(startTime)
-			if elapsed >= estimatedDuration {
-				return
-			}
-
-			result := SpeedTestResult{
-				Type:     testType,
+	for time.Since(start) < duration {
+		reqStart := time.Now()
+		resp, err := client.Head(cfPingURL)
+		rtt := int(time.Since(reqStart).Milliseconds())
+		if err == nil {
+			resp.Body.Close()
+			samples = append(samples, rtt)
+			reportSpeedTestResult(SpeedTestResult{
+				Type:     "latency",
 				Status:   "testing",
-				Progress: currentProgress,
-			}
-			reportSpeedTestResult(result)
+				Progress: progressAt(base, rng, time.Since(start), duration),
+				Latency:  &LatencyResult{Average: rtt, Min: rtt, Max: rtt},
+			})
+		}
+		time.Sleep(300 * time.Millisecond)
+	}
 
-			currentProgress += progressIncrement
-			if currentProgress > endProgress {
-				currentProgress = endProgress
+	result := &LatencyResult{}
+	if len(samples) > 0 {
+		sum, min, max := 0, samples[0], samples[0]
+		for _, s := range samples {
+			sum += s
+			if s < min {
+				min = s
 			}
+			if s > max {
+				max = s
+			}
+		}
+		avg := sum / len(samples)
+		result = &LatencyResult{Average: avg, Min: min, Max: max, GooglePing: avg}
+	}
 
-			time.Sleep(updateInterval)
+	reportSpeedTestResult(SpeedTestResult{
+		Type: "latency", Status: "completed", Progress: base + rng, Latency: result,
+	})
+	return result
+}
+
+// runDownloadPhase streams a real download for the given duration, measuring
+// actual instantaneous throughput on a fixed tick and reporting each sample
+// live. Re-fetches if the response body is exhausted before the time budget
+// (very fast connections).
+func runDownloadPhase(duration time.Duration, base, rng float64) float64 {
+	client := &http.Client{Timeout: duration + 15*time.Second}
+	start := time.Now()
+
+	var samples []float64
+	var bytesSinceTick int64
+	lastTick := start
+	buf := make([]byte, 64*1024)
+
+	resp, err := client.Get(cfDownloadURL)
+	if err != nil {
+		reportSpeedTestResult(SpeedTestResult{Type: "download", Status: "error", Progress: base + rng})
+		return 0
+	}
+
+	for time.Since(start) < duration {
+		n, readErr := resp.Body.Read(buf)
+		bytesSinceTick += int64(n)
+
+		now := time.Now()
+		if now.Sub(lastTick) >= sampleInterval {
+			instantRate := float64(bytesSinceTick) / now.Sub(lastTick).Seconds()
+			samples = append(samples, instantRate)
+			reportSpeedTestResult(SpeedTestResult{
+				Type: "download", Status: "testing",
+				Progress:      progressAt(base, rng, now.Sub(start), duration),
+				DownloadSpeed: instantRate,
+			})
+			bytesSinceTick = 0
+			lastTick = now
+		}
+
+		if readErr != nil {
+			resp.Body.Close()
+			if time.Since(start) >= duration {
+				break
+			}
+			// Body ran out before the time budget - grab another one.
+			resp, err = client.Get(cfDownloadURL)
+			if err != nil {
+				break
+			}
 		}
 	}
-}
-
-// simulateFullTestProgress simulates progress for a full test (latency + download + upload)
-func simulateFullTestProgress(done chan bool) {
-	// Phase 1: Latency (0-33%)
-	simulatePhase("latency", 0, 33.0, 5*time.Second, done)
-	
-	// Phase 2: Download (33-66%)
-	simulatePhase("download", 33.0, 66.0, 15*time.Second, done)
-	
-	// Phase 3: Upload (66-100%)
-	simulatePhase("upload", 66.0, 100.0, 15*time.Second, done)
-}
-
-func simulatePhase(testType string, startProgress, endProgress float64, duration time.Duration, done chan bool) {
-	updateInterval := 200 * time.Millisecond
-	progressRange := endProgress - startProgress
-	steps := int(duration / updateInterval)
-	if steps < 1 {
-		steps = 1
+	if resp != nil {
+		resp.Body.Close()
 	}
-	progressIncrement := progressRange / float64(steps)
 
-	currentProgress := startProgress
-	startTime := time.Now()
+	avg := trimmedAverage(samples)
+	reportSpeedTestResult(SpeedTestResult{
+		Type: "download", Status: "completed", Progress: base + rng, DownloadSpeed: avg,
+	})
+	return avg
+}
 
-	for {
-		select {
-		case <-done:
-			return
-		default:
-			elapsed := time.Since(startTime)
-			if elapsed >= duration {
+// countingReader produces zero-filled bytes (content is irrelevant for an
+// upload throughput test) and reports every byte written through onRead.
+type countingReader struct {
+	remaining int64
+	written   *int64
+}
+
+func (r *countingReader) Read(p []byte) (int, error) {
+	if r.remaining <= 0 {
+		return 0, io.EOF
+	}
+	n := len(p)
+	if int64(n) > r.remaining {
+		n = int(r.remaining)
+	}
+	for i := 0; i < n; i++ {
+		p[i] = 0
+	}
+	r.remaining -= int64(n)
+	atomic.AddInt64(r.written, int64(n))
+	return n, nil
+}
+
+// runUploadPhase uploads a stream of data for the given duration, measuring
+// real throughput on a fixed tick via a background ticker while the upload
+// request is in flight, and reporting each sample live.
+func runUploadPhase(duration time.Duration, base, rng float64) float64 {
+	var written int64
+	const capSize = 500 * 1024 * 1024 // generous cap; duration is the real cutoff
+
+	ctx, cancel := context.WithTimeout(context.Background(), duration+5*time.Second)
+	defer cancel()
+
+	reader := &countingReader{remaining: capSize, written: &written}
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, cfUploadURL, reader)
+	if err != nil {
+		reportSpeedTestResult(SpeedTestResult{Type: "upload", Status: "error", Progress: base + rng})
+		return 0
+	}
+	req.ContentLength = capSize
+	req.Header.Set("Content-Type", "application/octet-stream")
+
+	var samples []float64
+	stopTicker := make(chan struct{})
+	tickerStopped := make(chan struct{})
+
+	go func() {
+		defer close(tickerStopped)
+		start := time.Now()
+		var lastBytes int64
+		ticker := time.NewTicker(sampleInterval)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-stopTicker:
 				return
+			case now := <-ticker.C:
+				current := atomic.LoadInt64(&written)
+				delta := current - lastBytes
+				lastBytes = current
+				instantRate := float64(delta) / sampleInterval.Seconds()
+				samples = append(samples, instantRate)
+				reportSpeedTestResult(SpeedTestResult{
+					Type: "upload", Status: "testing",
+					Progress:    progressAt(base, rng, now.Sub(start), duration),
+					UploadSpeed: instantRate,
+				})
 			}
-
-			result := SpeedTestResult{
-				Type:     testType,
-				Status:   "testing",
-				Progress: currentProgress,
-			}
-			reportSpeedTestResult(result)
-
-			currentProgress += progressIncrement
-			if currentProgress > endProgress {
-				currentProgress = endProgress
-			}
-
-			time.Sleep(updateInterval)
 		}
+	}()
+
+	resp, doErr := http.DefaultClient.Do(req)
+	close(stopTicker)
+	<-tickerStopped
+	if doErr == nil && resp != nil {
+		resp.Body.Close()
 	}
+
+	avg := trimmedAverage(samples)
+	reportSpeedTestResult(SpeedTestResult{
+		Type: "upload", Status: "completed", Progress: base + rng, UploadSpeed: avg,
+	})
+	return avg
 }
 
-// findIrisBinary searches for the Iris binary in bundled location first, then common locations
-func findIrisBinary() (string, error) {
-	var paths []string
-
-	// First, try to find Iris in the bundled location (same directory as this executable)
-	// This works for both dev and packaged apps
-	if execPath, err := os.Executable(); err == nil {
-		execDir := filepath.Dir(execPath)
-		
-		// In packaged apps, binaries are in Resources/bin/
-		// Try relative to executable first (for dev builds)
-		bundledPaths := []string{
-			filepath.Join(execDir, "iris"),                    // Same dir as executable
-			filepath.Join(execDir, "bin", "iris"),              // bin subdirectory
-			filepath.Join(execDir, "..", "bin", "iris"),        // Parent/bin
-			filepath.Join(execDir, "..", "Resources", "bin", "iris"), // macOS app bundle Resources/bin
-			filepath.Join(execDir, "..", "..", "Resources", "bin", "iris"), // macOS app bundle (if executable is in MacOS/)
+// trimmedAverage drops the first sample (connection ramp-up skews it low)
+// when there are enough samples to spare, then averages the rest.
+func trimmedAverage(samples []float64) float64 {
+	if len(samples) == 0 {
+		return 0
+	}
+	if len(samples) <= 2 {
+		sum := 0.0
+		for _, s := range samples {
+			sum += s
 		}
-		paths = append(paths, bundledPaths...)
+		return sum / float64(len(samples))
 	}
-
-	// Then try common system paths
-	systemPaths := []string{
-		"iris", // In PATH
-		"/usr/local/bin/iris",
-		"/opt/homebrew/bin/iris",
-		filepath.Join(os.Getenv("HOME"), "bin", "iris"),
+	trimmed := samples[1:]
+	sum := 0.0
+	for _, s := range trimmed {
+		sum += s
 	}
-	paths = append(paths, systemPaths...)
-
-	// On macOS, also check Homebrew paths
-	if runtime.GOOS == "darwin" {
-		homebrewPaths := []string{
-			"/opt/homebrew/bin/iris",
-			"/usr/local/bin/iris",
-		}
-		paths = append(paths, homebrewPaths...)
-	}
-
-	// Try to find via which/where
-	if whichPath, err := exec.LookPath("iris"); err == nil {
-		paths = append([]string{whichPath}, paths...)
-	}
-
-	// Check each path
-	for _, p := range paths {
-		// Resolve absolute path
-		absPath, err := filepath.Abs(p)
-		if err != nil {
-			continue
-		}
-		
-		if info, err := os.Stat(absPath); err == nil {
-			// Verify it's executable
-			if info.Mode().Perm()&0111 != 0 {
-				return absPath, nil
-			}
-		}
-	}
-
-	return "", fmt.Errorf("Iris binary not found in bundled or common locations")
-}
-
-// Keep runSpeedTest for backward compatibility
-func runSpeedTest() {
-	runSpeedTestWithType("full")
+	return sum / float64(len(trimmed))
 }
 
 func reportSpeedTestResult(result SpeedTestResult) {

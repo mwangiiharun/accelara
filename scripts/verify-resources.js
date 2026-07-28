@@ -26,7 +26,7 @@ let errors = [];
 let warnings = [];
 
 // Check dist files
-console.log('🔍 Verifying dist files...');
+console.log('Verifying dist files...');
 REQUIRED_FILES.forEach(file => {
     const distPath = path.join(DIST_DIR, file);
     const publicPath = path.join(PUBLIC_DIR, file);
@@ -50,7 +50,7 @@ REQUIRED_FILES.forEach(file => {
 });
 
 // Check Go binaries
-console.log('\n🔍 Verifying Go binaries...');
+console.log('\nVerifying Go binaries...');
 REQUIRED_BINARIES.forEach(binary => {
     // Check both with and without .exe extension (for Windows)
     const binPath = path.join(BIN_DIR, binary);

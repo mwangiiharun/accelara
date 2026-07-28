@@ -10,6 +10,7 @@ mod browser_server;
 mod logger;
 mod updater;
 mod update_manager;
+mod monitor;
 
 use tauri::Manager;
 
@@ -44,6 +45,8 @@ pub fn run() {
             commands::save_settings,
             commands::select_torrent_file,
             commands::select_download_folder,
+            commands::move_download,
+            commands::relink_download,
             commands::open_folder,
             commands::get_system_theme,
             commands::show_window,
@@ -63,7 +66,10 @@ pub fn run() {
             
             // Initialize database
             database::init().expect("Failed to initialize database");
-            
+
+            // Start watching seeding torrents' files for external moves
+            monitor::init(app.handle().clone());
+
             // Set up event listeners for downloads
             download::setup_download_handlers(app);
             

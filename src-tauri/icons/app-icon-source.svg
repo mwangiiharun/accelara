@@ -1,0 +1,30 @@
+<svg width="1024" height="1024" viewBox="0 0 1024 1024" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <linearGradient id="accelaraBg" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#3AA6FF"/>
+      <stop offset="55%" stop-color="#0A84FF"/>
+      <stop offset="100%" stop-color="#0046C4"/>
+    </linearGradient>
+    <linearGradient id="accelaraSheen" x1="0%" y1="0%" x2="0%" y2="100%">
+      <stop offset="0%" stop-color="#FFFFFF" stop-opacity="0.22"/>
+      <stop offset="100%" stop-color="#FFFFFF" stop-opacity="0"/>
+    </linearGradient>
+  </defs>
+
+  <!-- App-icon shaped background (macOS-style rounded square) -->
+  <rect x="0" y="0" width="1024" height="1024" rx="228" ry="228" fill="url(#accelaraBg)"/>
+  <rect x="0" y="0" width="1024" height="512" rx="228" ry="228" fill="url(#accelaraSheen)"/>
+
+  <!-- Motion / acceleration trail -->
+  <g stroke="#FFFFFF" stroke-linecap="round" fill="none">
+    <line x1="176" y1="300" x2="238" y2="238" stroke-width="34" stroke-opacity="0.35"/>
+    <line x1="228" y1="352" x2="312" y2="268" stroke-width="34" stroke-opacity="0.6"/>
+    <line x1="290" y1="404" x2="392" y2="302" stroke-width="34" stroke-opacity="0.9"/>
+  </g>
+
+  <!-- Download glyph: arrow into a tray -->
+  <rect x="468" y="248" width="88" height="304" rx="44" fill="#FFFFFF"/>
+  <polygon points="382,516 512,700 642,516" fill="#FFFFFF"/>
+  <path d="M 340 762 L 340 838 Q 340 874 376 874 L 648 874 Q 684 874 684 838 L 684 762"
+        stroke="#FFFFFF" stroke-width="64" stroke-linecap="round" stroke-linejoin="round" fill="none"/>
+</svg>

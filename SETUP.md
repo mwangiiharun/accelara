@@ -2,11 +2,11 @@
 
 ## What's Been Done
 
-1. ✅ Cleaned up build artifacts (`release/` directory)
-2. ✅ Updated `.gitignore` to exclude `release/` directory
-3. ✅ Updated GitHub Actions workflow to handle different electron-builder output paths
-4. ✅ Initialized git repository
-5. ✅ Configured remote to `git@github.com:mwangiiharun/accelara.git`
+1. Cleaned up build artifacts (`release/` directory)
+2. Updated `.gitignore` to exclude `release/` directory
+3. Updated GitHub Actions workflow to handle different electron-builder output paths
+4. Initialized git repository
+5. Configured remote to `git@github.com:mwangiiharun/accelara.git`
 
 ## What You Need to Do on GitHub
 
@@ -47,8 +47,8 @@ git push -u origin main
 1. Go to your repository: https://github.com/mwangiiharun/accelara
 2. Click **Settings** → **Actions** → **General**
 3. Under **Workflow permissions**, select:
-   - ✅ **Read and write permissions**
-   - ✅ **Allow GitHub Actions to create and approve pull requests**
+   - **Read and write permissions**
+   - **Allow GitHub Actions to create and approve pull requests**
 4. Scroll down and click **Save**
 
 ### 4. Test the Workflow
@@ -93,10 +93,10 @@ Once the build completes:
 ### 7. Create a Release (Automatic)
 
 If you pushed a tag (like `v1.0.0`), the workflow will:
-- ✅ Automatically create a GitHub Release
-- ✅ Upload all build artifacts
-- ✅ Generate SHA256 checksums
-- ✅ Create release notes
+- Automatically create a GitHub Release
+- Upload all build artifacts
+- Generate SHA256 checksums
+- Create release notes
 
 You can find it at: https://github.com/mwangiiharun/accelara/releases
 
@@ -126,11 +126,11 @@ If artifacts aren't being created:
 
 ## Next Steps
 
-1. ✅ Push your code to GitHub
-2. ✅ Set up workflow permissions
-3. ✅ Test the workflow (manual trigger recommended)
-4. ✅ Download and test the built artifacts
-5. ✅ Create your first release tag
+1. Push your code to GitHub
+2. Set up workflow permissions
+3. Test the workflow (manual trigger recommended)
+4. Download and test the built artifacts
+5. Create your first release tag
 
 ## Notes
 

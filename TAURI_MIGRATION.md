@@ -6,15 +6,15 @@ The basic Tauri structure has been created. This is a significant migration from
 
 ## What's Been Done
 
-1. ✅ Tauri project initialized (`src-tauri/`)
-2. ✅ Basic Rust structure created:
+1. Tauri project initialized (`src-tauri/`)
+2. Basic Rust structure created:
    - `src/main.rs` - Entry point
    - `src/lib.rs` - Main application setup
    - `src/database.rs` - Database handling (using rusqlite)
    - `src/commands.rs` - Command handlers (stubs)
    - `src/download.rs` - Download management (stub)
-3. ✅ Tauri configuration updated
-4. ✅ Dependencies added to Cargo.toml
+3. Tauri configuration updated
+4. Dependencies added to Cargo.toml
 
 ## What Needs to Be Done
 
@@ -101,9 +101,9 @@ Update all frontend code to use Tauri APIs:
 
 ## Benefits of Tauri
 
-- ✅ Much smaller bundle size (~5-10MB vs ~100MB+)
-- ✅ Better security (no Node.js in renderer)
-- ✅ Better performance (Rust backend)
-- ✅ No GPU issues (uses system webview)
-- ✅ Native feel
+- Much smaller bundle size (~5-10MB vs ~100MB+)
+- Better security (no Node.js in renderer)
+- Better performance (Rust backend)
+- No GPU issues (uses system webview)
+- Native feel
 

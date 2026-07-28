@@ -1,7 +1,7 @@
 #!/bin/bash
 set -e
 
-echo "📦 Packaging Firefox extension as XPI..."
+echo "Packaging Firefox extension as XPI..."
 
 # Colors for output
 GREEN='\033[0;32m'
@@ -60,7 +60,7 @@ if [ $? -eq 0 ]; then
     echo ""
     echo -e "${GREEN}Installation instructions:${NC}"
     echo "1. Open Firefox and navigate to: about:addons"
-    echo "2. Click the gear icon (⚙️) in the top right"
+    echo "2. Click the gear icon (️) in the top right"
     echo "3. Select 'Install Add-on From File...'"
     echo "4. Select the XPI file: $XPI_PATH"
     echo ""

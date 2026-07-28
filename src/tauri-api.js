@@ -113,6 +113,16 @@ export const tauriAPI = {
     return { success: true };
   },
 
+  async moveDownload(downloadId, newParentDir) {
+    await invoke('move_download', { downloadId, newParentDir });
+    return { success: true };
+  },
+
+  async relinkDownload(downloadId, locatedParentDir) {
+    await invoke('relink_download', { downloadId, locatedParentDir });
+    return { success: true };
+  },
+
   async getActiveDownloads() {
     return await invoke('get_active_downloads');
   },
@@ -277,6 +287,57 @@ export const tauriAPI = {
       this._unlistenFunctions[key] = unlisten;
     }).catch((err) => {
       console.error('Failed to set up download-complete listener:', err);
+    });
+    return () => {
+      if (this._unlistenFunctions[key]) {
+        this._unlistenFunctions[key]();
+        delete this._unlistenFunctions[key];
+      }
+    };
+  },
+
+  onDownloadMoved(callback) {
+    const key = 'download-moved';
+    listen('download-moved', (event) => {
+      callback(event.payload);
+    }).then((unlisten) => {
+      this._unlistenFunctions[key] = unlisten;
+    }).catch((err) => {
+      console.error('Failed to set up download-moved listener:', err);
+    });
+    return () => {
+      if (this._unlistenFunctions[key]) {
+        this._unlistenFunctions[key]();
+        delete this._unlistenFunctions[key];
+      }
+    };
+  },
+
+  onDownloadRelinked(callback) {
+    const key = 'download-relinked';
+    listen('download-relinked', (event) => {
+      callback(event.payload);
+    }).then((unlisten) => {
+      this._unlistenFunctions[key] = unlisten;
+    }).catch((err) => {
+      console.error('Failed to set up download-relinked listener:', err);
+    });
+    return () => {
+      if (this._unlistenFunctions[key]) {
+        this._unlistenFunctions[key]();
+        delete this._unlistenFunctions[key];
+      }
+    };
+  },
+
+  onDownloadMissing(callback) {
+    const key = 'download-missing';
+    listen('download-missing', (event) => {
+      callback(event.payload);
+    }).then((unlisten) => {
+      this._unlistenFunctions[key] = unlisten;
+    }).catch((err) => {
+      console.error('Failed to set up download-missing listener:', err);
     });
     return () => {
       if (this._unlistenFunctions[key]) {

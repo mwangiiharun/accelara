@@ -3,7 +3,7 @@
 # Test script for resume functionality
 # This script tests if downloads resume correctly after app restart
 
-echo "🧪 Testing Resume Functionality"
+echo "Testing Resume Functionality"
 echo "================================"
 echo ""
 
@@ -26,7 +26,7 @@ if [ ! -d "$APP_PATH" ]; then
     echo "   Opening DMG..."
     open "$DMG_PATH"
     echo ""
-    echo "📋 Manual Test Steps:"
+    echo "Manual Test Steps:"
     echo "   1. Drag ACCELARA.app to Applications folder"
     echo "   2. Open ACCELARA from Applications"
     echo "   3. Start a download (HTTP or torrent)"
@@ -53,7 +53,7 @@ if [ -f "$DB_PATH" ]; then
     echo ""
     
     # Check for paused/downloading downloads
-    echo "📊 Checking for downloads to resume..."
+    echo "Checking for downloads to resume..."
     sqlite3 "$DB_PATH" "SELECT id, source, status, progress, downloaded, total FROM downloads WHERE status IN ('downloading', 'paused') ORDER BY started_at DESC LIMIT 5;" 2>/dev/null
     
     if [ $? -eq 0 ]; then
@@ -67,7 +67,7 @@ else
 fi
 
 echo ""
-echo "📋 Resume Test Checklist:"
+echo "Resume Test Checklist:"
 echo "   [ ] 1. Start a new download"
 echo "   [ ] 2. Let it download for 10-30 seconds"
 echo "   [ ] 3. Note the downloaded bytes/progress"
@@ -78,7 +78,7 @@ echo "   [ ] 7. Verify download auto-resumes"
 echo "   [ ] 8. Verify progress is restored (not 0 bytes)"
 echo "   [ ] 9. Verify download continues from where it left off"
 echo ""
-echo "🔍 Debug Tips:"
+echo "Debug Tips:"
 echo "   - Check debug logs: Window > Debug Logs"
 echo "   - Look for '[auto-resume]' messages in logs"
 echo "   - Check for '[resume-download]' messages"

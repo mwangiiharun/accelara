@@ -374,12 +374,14 @@ pub async fn start_download(
 #[command]
 pub async fn stop_download(download_id: String) -> Result<(), String> {
     let mut processes = DOWNLOAD_PROCESSES.lock().await;
-    
+
     if let Some(mut child) = processes.remove(&download_id) {
         child.kill().await
             .map_err(|e| format!("Failed to kill process: {}", e))?;
     }
-    
+
+    crate::monitor::stop_watching(&download_id).await;
+
     Ok(())
 }
 
@@ -405,6 +407,8 @@ pub async fn remove_download(
     // Delete from database
     conn.execute("DELETE FROM downloads WHERE id = ?1", [&download_id])
         .map_err(|e| format!("Failed to delete download: {}", e))?;
+
+    crate::monitor::stop_watching(&download_id).await;
     
     // Try to delete partial files if they exist
     if let Ok(output_path) = output {
@@ -454,17 +458,20 @@ pub async fn pause_download(
         }
         let _ = child.kill().await;
     }
-    
+    drop(processes);
+
+    crate::monitor::stop_watching(&download_id).await;
+
     // Update database
     let conn = database::get_connection()
         .map_err(|e| format!("Database error: {}", e))?;
-    
+
     let download: Result<Option<String>, _> = conn.query_row(
         "SELECT metadata FROM downloads WHERE id = ?1",
         [&download_id],
         |row| row.get::<_, Option<String>>(0),
     );
-    
+
     if let Ok(Some(metadata_str)) = download {
         let mut metadata: serde_json::Value = serde_json::from_str(&metadata_str)
             .unwrap_or_else(|_| serde_json::json!({}));
@@ -491,6 +498,189 @@ pub async fn pause_download(
         .map_err(|e| format!("Failed to emit event: {}", e))?;
     }
     
+    Ok(())
+}
+
+/// Stop the process (if running), point the download at a new location, and
+/// restart it so the Go binary re-verifies pieces and resumes seeding from
+/// there. Shared by the manual move/relink commands and the auto-detected
+/// external-move handler in `monitor.rs`.
+pub async fn repoint_and_restart(
+    app: &tauri::AppHandle,
+    download_id: &str,
+    new_output_dir: &std::path::Path,
+) -> Result<(), String> {
+    {
+        let mut processes = DOWNLOAD_PROCESSES.lock().await;
+        if let Some(mut child) = processes.remove(download_id) {
+            let _ = child.kill().await;
+        }
+    }
+    crate::monitor::stop_watching(download_id).await;
+
+    let conn = database::get_connection()
+        .map_err(|e| format!("Database error: {}", e))?;
+    conn.execute(
+        "UPDATE downloads SET output = ? WHERE id = ?",
+        rusqlite::params![new_output_dir.to_string_lossy().to_string(), download_id],
+    )
+    .map_err(|e| format!("Failed to update output path: {}", e))?;
+    drop(conn);
+
+    resume_download_internal(download_id.to_string(), app.clone()).await
+}
+
+/// Mark a download as needing the user to relink it - its files vanished
+/// from where we were watching and we have no reliable way to tell where
+/// they went.
+pub async fn mark_download_missing(app: &tauri::AppHandle, download_id: &str) -> Result<(), String> {
+    {
+        let mut processes = DOWNLOAD_PROCESSES.lock().await;
+        if let Some(mut child) = processes.remove(download_id) {
+            let _ = child.kill().await;
+        }
+    }
+    crate::monitor::stop_watching(download_id).await;
+
+    let conn = database::get_connection()
+        .map_err(|e| format!("Database error: {}", e))?;
+    conn.execute(
+        "UPDATE downloads SET status = 'missing_files' WHERE id = ?",
+        rusqlite::params![download_id],
+    )
+    .map_err(|e| format!("Failed to update status: {}", e))?;
+    drop(conn);
+
+    app.emit("download-missing", serde_json::json!({
+        "downloadId": download_id,
+    }))
+    .map_err(|e| format!("Failed to emit event: {}", e))?;
+
+    Ok(())
+}
+
+fn copy_dir_recursive(from: &std::path::Path, to: &std::path::Path) -> std::io::Result<()> {
+    if from.is_dir() {
+        std::fs::create_dir_all(to)?;
+        for entry in std::fs::read_dir(from)? {
+            let entry = entry?;
+            let dest = to.join(entry.file_name());
+            copy_dir_recursive(&entry.path(), &dest)?;
+        }
+    } else {
+        std::fs::copy(from, to)?;
+    }
+    Ok(())
+}
+
+// Handler: move-download - relocate a seeding torrent's files to a new
+// folder chosen by the user and keep seeding from there.
+#[command]
+pub async fn move_download(
+    download_id: String,
+    new_parent_dir: String,
+    app: tauri::AppHandle,
+) -> Result<(), String> {
+    let conn = database::get_connection()
+        .map_err(|e| format!("Database error: {}", e))?;
+    let download_type: String = conn.query_row(
+        "SELECT type FROM downloads WHERE id = ?1",
+        [&download_id],
+        |row| row.get(0),
+    )
+    .map_err(|_| "Download not found".to_string())?;
+    drop(conn);
+
+    if download_type != "torrent" && download_type != "magnet" {
+        return Err("Only torrents can be moved while seeding".to_string());
+    }
+
+    let tracked_path = crate::monitor::get_tracked_path(&download_id).await
+        .ok_or_else(|| "This download isn't actively seeding right now, so there's nothing to move yet".to_string())?;
+
+    let file_name = tracked_path.file_name()
+        .ok_or_else(|| "Could not determine the torrent's file/folder name".to_string())?
+        .to_owned();
+
+    let new_parent = utils::expand_path(&new_parent_dir);
+    let new_parent_path = std::path::Path::new(&new_parent);
+    std::fs::create_dir_all(new_parent_path)
+        .map_err(|e| format!("Failed to create destination folder: {}", e))?;
+    let new_path = new_parent_path.join(&file_name);
+
+    if new_path.exists() {
+        return Err(format!("{} already exists at the destination", file_name.to_string_lossy()));
+    }
+
+    if let Err(e) = std::fs::rename(&tracked_path, &new_path) {
+        // Cross-device moves (different drive/volume) can't use rename()
+        if e.raw_os_error() == Some(18) /* EXDEV */ {
+            copy_dir_recursive(&tracked_path, &new_path)
+                .map_err(|e| format!("Failed to copy files to destination: {}", e))?;
+            std::fs::remove_dir_all(&tracked_path)
+                .map_err(|e| format!("Copied to destination but failed to clean up the original: {}", e))?;
+        } else {
+            return Err(format!("Failed to move files: {}", e));
+        }
+    }
+
+    repoint_and_restart(&app, &download_id, new_parent_path).await?;
+
+    app.emit("download-moved", serde_json::json!({
+        "downloadId": download_id,
+        "newPath": new_parent_path.to_string_lossy(),
+    }))
+    .map_err(|e| format!("Failed to emit event: {}", e))?;
+
+    Ok(())
+}
+
+// Handler: relink-download - point a download whose files were moved
+// externally (outside the app) at their new location. Nothing is moved on
+// disk here; the user already did that.
+#[command]
+pub async fn relink_download(
+    download_id: String,
+    located_parent_dir: String,
+    app: tauri::AppHandle,
+) -> Result<(), String> {
+    let conn = database::get_connection()
+        .map_err(|e| format!("Database error: {}", e))?;
+    let download_type: String = conn.query_row(
+        "SELECT type FROM downloads WHERE id = ?1",
+        [&download_id],
+        |row| row.get(0),
+    )
+    .map_err(|_| "Download not found".to_string())?;
+    drop(conn);
+
+    if download_type != "torrent" && download_type != "magnet" {
+        return Err("Only torrents can be relinked".to_string());
+    }
+
+    let located_parent = utils::expand_path(&located_parent_dir);
+    let located_parent_path = std::path::Path::new(&located_parent);
+    if !located_parent_path.exists() || !located_parent_path.is_dir() {
+        return Err("That folder doesn't exist".to_string());
+    }
+
+    // Best-effort sanity check so we don't silently kick off a brand new
+    // download from scratch when the folder turns out to be empty.
+    let has_contents = std::fs::read_dir(located_parent_path)
+        .map(|mut entries| entries.next().is_some())
+        .unwrap_or(false);
+    if !has_contents {
+        return Err("That folder is empty - relinking here would start the download over from scratch".to_string());
+    }
+
+    repoint_and_restart(&app, &download_id, located_parent_path).await?;
+
+    app.emit("download-relinked", serde_json::json!({
+        "downloadId": download_id,
+        "newPath": located_parent_path.to_string_lossy(),
+    }))
+    .map_err(|e| format!("Failed to emit event: {}", e))?;
+
     Ok(())
 }
 
@@ -857,8 +1047,17 @@ async fn resume_download_internal(
         // Start monitoring task
         let app_clone = app.clone();
         let download_id_clone = download_id.clone();
+        let download_type_clone = _download_type.clone();
+        let output_dir_clone = expanded_output.clone();
         tokio::spawn(async move {
-            download::monitor_download_process_with_streams(app_clone, download_id_clone, stdout, stderr).await;
+            download::monitor_download_process_with_streams(
+                app_clone,
+                download_id_clone,
+                stdout,
+                stderr,
+                download_type_clone,
+                output_dir_clone,
+            ).await;
         });
     } else {
         logger::log_error("resume_download", &format!("Failed to retrieve process from map for monitoring: {}", download_id));
@@ -1269,25 +1468,28 @@ pub async fn start_speed_test(
         nanoid::nanoid!(9)
     );
     
-    let _test_type = test_type.unwrap_or_else(|| "full".to_string());
-    
-    // Find iris binary
-    let iris_binary = utils::find_iris_binary()
-        .ok_or_else(|| "Iris binary not found".to_string())?;
-    
-    let verified_binary = utils::verify_binary_path(&iris_binary)
+    let test_type_str = test_type.unwrap_or_else(|| "full".to_string());
+
+    // Speed testing is done by our own Go binary (real, live-sampled HTTP
+    // throughput + latency measurements over ~30s), not the bundled iris
+    // tool - iris is a single blocking call with no interim data, which
+    // can't produce the live variation this test now streams.
+    let go_binary = utils::find_go_binary()
+        .ok_or_else(|| "Go binary (api-wrapper) not found".to_string())?;
+
+    let verified_binary = utils::verify_binary_path(&go_binary)
         .map_err(|e| format!("Binary verification failed: {}", e))?;
-    
+
     let working_dir = utils::get_working_directory();
-    
-    // Spawn iris process
+
+    // Spawn api-wrapper in speed test mode
     let child = TokioCommand::new(&verified_binary)
-        .args(&["--json", "--quiet"])
+        .args(&["--speedtest", "--test-type", &test_type_str])
         .current_dir(&working_dir)
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .spawn()
-        .map_err(|e| format!("Failed to spawn iris process: {}", e))?;
+        .map_err(|e| format!("Failed to spawn speed test process: {}", e))?;
     
     // Store process
     let mut processes = SPEED_TEST_PROCESSES.lock().await;

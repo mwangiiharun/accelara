@@ -222,10 +222,10 @@ export default function AddDownloadModal({ onClose, initialSource = '', autoStar
   };
 
   return (
-    <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
-      <div className="theme-bg-secondary rounded-lg p-6 w-full max-w-md border theme-border">
+    <div className="fixed inset-0 bg-black/50 backdrop-blur-sm flex items-center justify-center z-50 animate-backdrop-in">
+      <div className="vibrancy rounded-2xl p-6 w-full max-w-md border theme-border shadow-soft-lg animate-modal-in">
         <div className="flex items-center justify-between mb-4">
-          <h2 className="text-xl font-semibold theme-text-primary">New Download</h2>
+          <h2 className="text-xl font-semibold tracking-tight theme-text-primary">New Download</h2>
           <button
             onClick={onClose}
             className="theme-text-secondary hover:theme-text-primary transition-colors"
@@ -293,14 +293,14 @@ export default function AddDownloadModal({ onClose, initialSource = '', autoStar
           )}
 
           {inspectError && (
-            <div className="flex items-start gap-2 p-3 theme-bg-tertiary rounded-lg border theme-border">
+            <div className="flex items-start gap-2 p-3 theme-bg-tertiary rounded-xl border theme-border">
               <AlertCircle className="w-4 h-4 theme-text-tertiary flex-shrink-0 mt-0.5" />
               <p className="text-sm theme-text-tertiary">{inspectError}</p>
             </div>
           )}
 
           {torrentInfo && (
-            <div className="p-4 theme-bg-tertiary rounded-lg border theme-border">
+            <div className="p-4 theme-bg-tertiary rounded-xl border theme-border">
               <h3 className="text-sm font-semibold theme-text-primary mb-2">Torrent Details</h3>
               <div className="space-y-2 text-sm">
                 <div className="flex justify-between">
@@ -341,7 +341,7 @@ export default function AddDownloadModal({ onClose, initialSource = '', autoStar
 
           {/* HTTP Info Preview */}
           {httpInfo && (
-            <div className="p-4 theme-bg-tertiary rounded-lg border theme-border">
+            <div className="p-4 theme-bg-tertiary rounded-xl border theme-border">
               <h3 className="text-sm font-semibold theme-text-primary mb-2">File Information</h3>
               <div className="space-y-2 text-sm">
                 <div className="flex justify-between">

@@ -1,6 +1,6 @@
 <div align="center">
 
-# 🚀⚡🔥 ACCELARA 🔥⚡🚀
+# ACCELARA
 
 ```
 ╔═══════════════════════════════════════════════════════════╗
@@ -12,12 +12,12 @@
 ║   ██║  ██║╚██████╗███████╗███████╗██║  ██║██║  ██║██║  ██║║
 ║   ╚═╝  ╚═╝ ╚═════╝╚══════╝╚══════╝╚═╝  ╚═╝╚═╝  ╚═╝╚═╝  ╚═╝║
 ║                                                           ║
-║  🎯 Unified HTTP + BitTorrent CLI Download Manager 🎯     ║
+║  Unified HTTP + BitTorrent CLI Download Manager           ║
 ║                                                           ║
 ╚═══════════════════════════════════════════════════════════╝
 ```
 
-**⚡ Accelerate your downloads with style! (And by "style" I mean "actually works") ⚡**
+**Accelerate your downloads with style! (And by "style" I mean "actually works")**
 
 </div>
 
@@ -48,37 +48,37 @@ Oh, and I also built a **fancy Tauri GUI** because apparently typing commands is
 
 ### HTTP/HTTPS Downloads - The Boring But Necessary Part
 
-- ✅ **Segmented Downloads** - Download files in parallel chunks. Waiting is for peasants.
-- ✅ **Resume Support** - Your internet died? No problem. It'll pick up where you left off like nothing happened.
-- ✅ **Rate Limiting** - Your ISP probably has a data cap and you're too lazy to check. I've got you covered.
-- ✅ **SHA256 Verification** - Verify your downloads aren't corrupted or tampered with. Paranoia is healthy.
-- ✅ **Custom Headers** - Add authentication headers. APIs are needy like that.
-- ✅ **Proxy Support** - Download through proxies when you need to pretend you're in a different country.
-- ✅ **Configurable Timeouts** - Set timeouts so you don't wait forever for that slow server.
-- ✅ **Retry Logic** - Automatic retries with exponential backoff. The first failure wasn't enough.
+- **Segmented Downloads** - Download files in parallel chunks. Waiting is for peasants.
+- **Resume Support** - Your internet died? No problem. It'll pick up where you left off like nothing happened.
+- **Rate Limiting** - Your ISP probably has a data cap and you're too lazy to check. I've got you covered.
+- **SHA256 Verification** - Verify your downloads aren't corrupted or tampered with. Paranoia is healthy.
+- **Custom Headers** - Add authentication headers. APIs are needy like that.
+- **Proxy Support** - Download through proxies when you need to pretend you're in a different country.
+- **Configurable Timeouts** - Set timeouts so you don't wait forever for that slow server.
+- **Retry Logic** - Automatic retries with exponential backoff. The first failure wasn't enough.
 
 ### BitTorrent Downloads - The Fun Part
 
-- ✅ **Magnet Links** - Typing `magnet:?xt=urn:btih:` is totally normal. Trust me.
-- ✅ **Torrent Files** - Support for local and remote `.torrent` files. The old school way.
-- ✅ **Sequential Mode** - Download files in order for streaming. Who has time to wait?
-- ✅ **Rate Limits** - Set separate upload and download limits. Be a good citizen, share your bandwidth.
-- ✅ **DHT Support** - Distributed hash table for peer discovery. It's basically magic.
-- ✅ **Progress Tracking** - Real-time progress with peer count and speeds. Watch those numbers go up!
+- **Magnet Links** - Typing `magnet:?xt=urn:btih:` is totally normal. Trust me.
+- **Torrent Files** - Support for local and remote `.torrent` files. The old school way.
+- **Sequential Mode** - Download files in order for streaming. Who has time to wait?
+- **Rate Limits** - Set separate upload and download limits. Be a good citizen, share your bandwidth.
+- **DHT Support** - Distributed hash table for peer discovery. It's basically magic.
+- **Progress Tracking** - Real-time progress with peer count and speeds. Watch those numbers go up!
 
 ### General Features - The "I Thought of Everything" Part
 
-- ✅ **Cross-Platform** - Works on Linux, macOS, and Windows. Yes, even Windows.
-- ✅ **Progress Bars** - Visual progress indicators. Watching text scroll is so 1990s.
-- ✅ **Quiet Mode** - Suppress output for scripting. Automation is the future.
-- ✅ **Graceful Interruption** - CTRL+C support with resume capability. Accidents happen.
-- ✅ **Pause/Resume** - Pause downloads anytime and resume later. Control is power.
-- ✅ **Persistent State** - Downloads persist across app restarts. Your downloads survive crashes.
-- ✅ **Auto-Pause on Exit** - All active downloads automatically pause when you close the app. No surprises.
-- ✅ **Storage Cleanup** - Clear junk partial files with one click. See how much space you'll free up.
-- ✅ **Duplicate Prevention** - Smart duplicate detection prevents multiple downloads of the same file.
-- ✅ **File Associations** - Double-click `.torrent` files or `magnet:` links to start downloads.
-- ✅ **Configurable Torrent Port** - Set your preferred BitTorrent port with automatic fallback.
+- **Cross-Platform** - Works on Linux, macOS, and Windows. Yes, even Windows.
+- **Progress Bars** - Visual progress indicators. Watching text scroll is so 1990s.
+- **Quiet Mode** - Suppress output for scripting. Automation is the future.
+- **Graceful Interruption** - CTRL+C support with resume capability. Accidents happen.
+- **Pause/Resume** - Pause downloads anytime and resume later. Control is power.
+- **Persistent State** - Downloads persist across app restarts. Your downloads survive crashes.
+- **Auto-Pause on Exit** - All active downloads automatically pause when you close the app. No surprises.
+- **Storage Cleanup** - Clear junk partial files with one click. See how much space you'll free up.
+- **Duplicate Prevention** - Smart duplicate detection prevents multiple downloads of the same file.
+- **File Associations** - Double-click `.torrent` files or `magnet:` links to start downloads.
+- **Configurable Torrent Port** - Set your preferred BitTorrent port with automatic fallback.
 
 ---
 
@@ -194,10 +194,10 @@ This will:
 - Create DMG with all binaries properly bundled
 
 **Verification Steps:**
-- ✅ Go binaries verified (`api-wrapper`, `iris`)
-- ✅ Frontend files verified (`index.html`, `debug-logs.html`)
-- ✅ Resources automatically copied if missing
-- ✅ Tauri bundles everything correctly (no more missing binary issues!)
+- Go binaries verified (`api-wrapper`, `iris`)
+- Frontend files verified (`index.html`, `debug-logs.html`)
+- Resources automatically copied if missing
+- Tauri bundles everything correctly (no more missing binary issues!)
 
 **Output:** `src-tauri/target/release/bundle/dmg/ACCELARA_*.dmg` - A verified DMG file ready for distribution.
 
@@ -249,8 +249,8 @@ npm run build
 ```
 
 This creates:
-- `ACCELARA Setup.exe` - An NSIS installer that Windows users will recognize
-- Located in `release/win-unpacked/` - The unpacked version (for testing)
+- `ACCELARA_x.x.x_x64-setup.exe` - An NSIS installer that Windows users will recognize
+- Located in `src-tauri/target/release/bundle/nsis/` - that's where Tauri drops it, not `release/` (that path is a leftover from the pre-Tauri Electron days)
 
 **Option 2: Use GitHub Actions **
 
@@ -276,7 +276,7 @@ jobs:
       - uses: actions/upload-artifact@v3
         with:
           name: windows-build
-          path: release/*
+          path: src-tauri/target/release/bundle/nsis/*
 ```
 
 Then push to GitHub and let Microsoft's servers do the work. It's like having a Windows machine, but free and in the cloud. Magic.
@@ -309,17 +309,19 @@ Linux builds are... interesting. There are like 47 different package formats, an
 npm run build
 ```
 
+**Before you build:** Tauri needs `libwebkit2gtk-4.1-dev`, `libgtk-3-dev`, `librsvg2-dev`, and a few other system packages installed first, or the Rust build will fail with cryptic linker errors. Check the [Tauri Linux prerequisites](https://tauri.app/start/prerequisites/) for your distro's package names.
+
 **What you get:**
-- `ACCELARA.AppImage` - A single file that runs on most Linux distros
-- Located in `release/linux-unpacked/` - The unpacked version
+- `ACCELARA_x.x.x_amd64.AppImage` - A single file that runs on most Linux distros
+- Located in `src-tauri/target/release/bundle/appimage/` - not `release/`, that's the old Electron path
 
 **Making it executable (because Linux):**
 
 ```bash
-chmod +x release/linux-unpacked/ACCELARA.AppImage
+chmod +x src-tauri/target/release/bundle/appimage/ACCELARA_*.AppImage
 ```
 
-**For other formats** (DEB, RPM, etc.), you'll need to configure electron-builder further. But honestly, AppImage works everywhere. It's like the universal donor of Linux packages.
+**For other formats** (DEB, RPM, etc.): Tauri also produces a `.deb` in `src-tauri/target/release/bundle/deb/` by default. Add more targets in `tauri.conf.json`'s `bundle.targets` array. AppImage still works everywhere though - it's the universal donor of Linux packages.
 
 ---
 
@@ -342,9 +344,14 @@ jobs:
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v3
+      - name: Install Linux dependencies
+        if: matrix.os == 'ubuntu-latest'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libgtk-3-dev librsvg2-dev
       - uses: actions/setup-go@v4
         with:
-          go-version: '1.21'
+          go-version: '1.24'
       - uses: actions/setup-node@v3
         with:
           node-version: '20'
@@ -354,20 +361,14 @@ jobs:
       - uses: actions/upload-artifact@v3
         with:
           name: ${{ matrix.os }}-build
-          path: release/*
+          path: src-tauri/target/release/bundle/**
 ```
 
 Push to GitHub, grab a coffee, and come back to find builds for all platforms. It's like having three computers, but free.
 
 **Option 2: Use Docker**
 
-```bash
-# Build for Linux (easy, you're probably on Linux or macOS)
-docker run --rm -v $(pwd):/app -w /app node:20 bash -c "npm install && npm run build"
-
-# For Windows, you'll need a Windows container (which requires Windows)
-# So... back to Option 1, I guess?
-```
+Doesn't really work for a Tauri build - you'd need Rust, Go, and the Linux GUI dev libraries all baked into the image, not just Node. If you want this, write yourself a proper Dockerfile instead of a one-liner; the GitHub Actions matrix above is genuinely less work.
 
 **Option 3: Actually Have All Three Platforms**
 
@@ -602,9 +603,9 @@ Pretty pictures sell, so here they are:
 
 ### Download Type Icons
 
-- ⚡ **Lightning** - HTTP segmented downloads (the fast one)
-- 🧲 **Magnet** - Magnet link downloads (the mysterious one)
-- 📄 **File** - Torrent file downloads (the traditional one)
+- **Lightning** - HTTP segmented downloads (the fast one)
+- **Magnet** - Magnet link downloads (the mysterious one)
+- **File** - Torrent file downloads (the traditional one)
 
 ### Side Panel - The Control Center
 
@@ -720,6 +721,15 @@ Life happens. Power outages, cats on keyboards, you name it. Just run the same c
 
 HTTP downloads save partial files as `.{filename}.part.{start}.{end}` files. This allows for automatic resume. The downloader will automatically detect and resume from these partial files. You can safely delete these files if you want to start fresh (or if you're feeling destructive).
 
+### Moving a Seeding Torrent (Without Losing Your Seed Ratio)
+
+Finished torrent and want to move it to a bigger drive without starting the upload from zero? Click the move icon on a seeding torrent, pick a new folder, and ACCELARA relocates the files and keeps seeding from the new location - no re-download, no lost pieces.
+
+It also watches seeding torrents in the background, so if you move or rename the folder yourself (Finder, Explorer, whatever), it'll notice:
+- **Renamed in place, same parent folder** - detected automatically, seeding keeps going from the new path.
+- **Moved somewhere entirely new** - the OS doesn't tell any app about a move unless something was already watching the destination, so this one we can't see coming. The download gets flagged "files missing" with a **Locate Files** button - point it at the new folder and it picks up where it left off.
+- **Renamed to a different name** - the torrent's own metadata is tied to its original name, so this breaks seeding regardless of what we do. Same "files missing" recovery path applies.
+
 ---
 
 ## Troubleshooting
@@ -811,17 +821,17 @@ Contributions are welcome! Please feel free to submit a Pull Request. But please
 
 ## Support
 
-If you find ACCELARA useful and want to support its development, consider buying me a coffee! ☕
+If you find ACCELARA useful and want to support its development, consider buying me a coffee!
 
 [![Buy Me A Coffee](https://img.shields.io/badge/Buy%20Me%20A%20Coffee-PayPal-orange?style=for-the-badge&logo=paypal)](https://www.paypal.com/ncp/payment/KPV3AUVU6BYT6)
 
-Your support helps keep this project alive and caffeinated. Every contribution, is greatly appreciated! 🙏
+Your support helps keep this project alive and caffeinated. Every contribution, is greatly appreciated!
 
 ---
 
 ## About
 
-**ACCELARA** - Accelerate your downloads with style! ⚡
+**ACCELARA** - Accelerate your downloads with style!
 
 (And by "style" I mean "it actually works and doesn't make you want to throw your computer out the window.")
 
@@ -831,4 +841,4 @@ Part of the accelara open-source project. Open source is the future, or somethin
 
 
 
-*Made with ❤️, probably too much coffee, and a healthy dose of "I have no idea what I'm doing but let's see what happens."*
+*Made with love, probably too much coffee, and a healthy dose of "I have no idea what I'm doing but let's see what happens."*

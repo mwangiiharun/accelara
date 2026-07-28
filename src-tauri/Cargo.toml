@@ -1,6 +1,6 @@
 [package]
 name = "accelara"
-version = "3.0.3"
+version = "3.1.0"
 description = "ACCELARA - Unified HTTP + BitTorrent CLI Download Manager"
 authors = ["Mwangii Kinuthia"]
 license = "MIT"
@@ -34,6 +34,7 @@ dirs = "5.0"
 which = "6.0"
 lazy_static = "1.4"
 nanoid = "0.4"
+notify = "6.1"
 chrono = "0.4"
 axum = { version = "0.7", features = ["macros"] }
 tower = "0.4"

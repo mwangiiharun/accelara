@@ -1,18 +1,18 @@
 #!/bin/bash
 set -e
 
-echo "🔨 Building ACCELARA with Tauri..."
+echo "Building ACCELARA with Tauri..."
 
 # Build Go binaries
-echo "📦 Building Go binaries..."
+echo "Building Go binaries..."
 make build-api
 
 # Build React frontend
-echo "⚛️  Building React frontend..."
+echo "️  Building React frontend..."
 npm run build:react
 
 # Verify required resources are in dist
-echo "🔍 Verifying resources..."
+echo "Verifying resources..."
 PROJECT_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 REQUIRED_FILES=("index.html" "debug-logs.html")
 MISSING_FILES=()
@@ -38,7 +38,7 @@ if [ ${#MISSING_FILES[@]} -ne 0 ]; then
 fi
 
 # Verify Go binaries
-echo "🔍 Verifying Go binaries..."
+echo "Verifying Go binaries..."
 REQUIRED_BINARIES=("api-wrapper" "iris")
 MISSING_BINARIES=()
 
@@ -59,7 +59,7 @@ fi
 echo "✓ All resources verified"
 
 # Build Tauri app
-echo "🦀 Building Tauri app..."
+echo "Building Tauri app..."
 export PATH="$HOME/.cargo/bin:$PATH"
 cd src-tauri
 cargo build --release

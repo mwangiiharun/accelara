@@ -4,7 +4,7 @@ import ActiveDownloadsList from './ActiveDownloadsList';
 import SpeedChart from './SpeedChart';
 import StatsPanel from './StatsPanel';
 import SpeedTest from './SpeedTest';
-import { Zap, Download, Globe, Magnet, Activity, ChevronDown, ChevronUp } from 'lucide-react';
+import { Download, Globe, Magnet, Activity, ChevronDown, ChevronUp } from 'lucide-react';
 
 export default function Dashboard({ onAddDownload }) {
   const { downloads, stats, highlightedDownloadId } = useDownloads();
@@ -27,14 +27,18 @@ export default function Dashboard({ onAddDownload }) {
   return (
     <div className="flex flex-col h-full relative">
       {/* Header */}
-      <header className="theme-bg-secondary theme-border border-b px-6 py-4 flex items-center justify-between">
+      <header className="vibrancy theme-border border-b px-6 py-4 flex items-center justify-between sticky top-0 z-10">
         <div className="flex items-center gap-3">
-          <Zap className="w-8 h-8 text-primary-400" />
-          <h1 className="text-2xl font-bold theme-text-primary">ACCELARA</h1>
+          <img
+            src="/logo.svg"
+            alt="ACCELARA"
+            className="w-8 h-8 rounded-[0.4rem] shadow-soft animate-logo-pop transition-transform duration-200 hover:scale-110 hover:rotate-3"
+          />
+          <h1 className="text-2xl font-semibold tracking-tight theme-text-primary">ACCELARA</h1>
         </div>
         <button
           onClick={onAddDownload}
-          className="btn-primary flex items-center gap-2"
+          className="btn-primary flex items-center gap-2 shadow-soft"
         >
           <Download className="w-4 h-4" />
           New Download
@@ -44,12 +48,12 @@ export default function Dashboard({ onAddDownload }) {
       {/* Main Content */}
       <div className="flex-1 overflow-auto p-6">
         {/* Tabs - Always visible */}
-        <div className="mb-4 flex gap-2 border-b theme-border">
+        <div className="mb-4 flex gap-1 theme-bg-secondary p-1 rounded-xl w-fit">
           <button
             onClick={() => setActiveTab('all')}
-            className={`px-4 py-2 font-medium transition-colors ${
+            className={`px-4 py-1.5 rounded-lg text-sm font-medium transition-colors ${
               activeTab === 'all'
-                ? 'text-primary-400 border-b-2 border-primary-400'
+                ? 'theme-bg-primary theme-text-primary shadow-soft'
                 : 'theme-text-secondary hover:theme-text-primary'
             }`}
           >
@@ -57,9 +61,9 @@ export default function Dashboard({ onAddDownload }) {
           </button>
           <button
             onClick={() => setActiveTab('http')}
-            className={`px-4 py-2 font-medium transition-colors flex items-center gap-2 ${
+            className={`px-4 py-1.5 rounded-lg text-sm font-medium transition-colors flex items-center gap-2 ${
               activeTab === 'http'
-                ? 'text-primary-400 border-b-2 border-primary-400'
+                ? 'theme-bg-primary theme-text-primary shadow-soft'
                 : 'theme-text-secondary hover:theme-text-primary'
             }`}
           >
@@ -68,9 +72,9 @@ export default function Dashboard({ onAddDownload }) {
           </button>
           <button
             onClick={() => setActiveTab('torrent')}
-            className={`px-4 py-2 font-medium transition-colors flex items-center gap-2 ${
+            className={`px-4 py-1.5 rounded-lg text-sm font-medium transition-colors flex items-center gap-2 ${
               activeTab === 'torrent'
-                ? 'text-primary-400 border-b-2 border-primary-400'
+                ? 'theme-bg-primary theme-text-primary shadow-soft'
                 : 'theme-text-secondary hover:theme-text-primary'
             }`}
           >
@@ -79,9 +83,9 @@ export default function Dashboard({ onAddDownload }) {
           </button>
           <button
             onClick={() => setActiveTab('speedtest')}
-            className={`px-4 py-2 font-medium transition-colors flex items-center gap-2 ${
+            className={`px-4 py-1.5 rounded-lg text-sm font-medium transition-colors flex items-center gap-2 ${
               activeTab === 'speedtest'
-                ? 'text-primary-400 border-b-2 border-primary-400'
+                ? 'theme-bg-primary theme-text-primary shadow-soft'
                 : 'theme-text-secondary hover:theme-text-primary'
             }`}
           >

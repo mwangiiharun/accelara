@@ -1,14 +1,15 @@
 import { useState } from 'react';
 import { useDownloads } from '../context/DownloadContext';
-import { Zap, Magnet, File, X, Pause, Play, FolderOpen, ChevronDown, ChevronUp, Activity, Trash2, AlertCircle, Info, RotateCw } from 'lucide-react';
+import { Zap, Magnet, File, X, Pause, Play, FolderOpen, FolderInput, ChevronDown, ChevronUp, Activity, Trash2, AlertCircle, Info, RotateCw } from 'lucide-react';
 import { formatBytes, formatTime } from '../utils/format';
 import SpeedChart from './SpeedChart';
 
 export default function DownloadItem({ download }) {
-  const { stopDownload, pauseDownload, resumeDownload, removeDownload, retryDownload, highlightedDownloadId, setHighlightedDownloadId } = useDownloads();
+  const { stopDownload, pauseDownload, resumeDownload, removeDownload, retryDownload, moveDownload, relinkDownload, highlightedDownloadId, setHighlightedDownloadId } = useDownloads();
   const [showChunks, setShowChunks] = useState(false);
   const [showFiles, setShowFiles] = useState(false);
-  
+  const [relocateError, setRelocateError] = useState(null);
+
   const isHighlighted = highlightedDownloadId === download.id;
 
   const handleOpenFolder = async () => {
@@ -18,6 +19,32 @@ export default function DownloadItem({ download }) {
       } catch (error) {
         console.error('Failed to open folder:', error);
       }
+    }
+  };
+
+  const handleMove = async () => {
+    if (!window.electronAPI) return;
+    try {
+      const folderPath = await window.electronAPI.selectDownloadFolder();
+      if (!folderPath) return;
+      setRelocateError(null);
+      await moveDownload(download.id, folderPath);
+    } catch (error) {
+      console.error('Failed to move download:', error);
+      setRelocateError(error.message || String(error));
+    }
+  };
+
+  const handleLocate = async () => {
+    if (!window.electronAPI) return;
+    try {
+      const folderPath = await window.electronAPI.selectDownloadFolder();
+      if (!folderPath) return;
+      setRelocateError(null);
+      await relinkDownload(download.id, folderPath);
+    } catch (error) {
+      console.error('Failed to relink download:', error);
+      setRelocateError(error.message || String(error));
     }
   };
 
@@ -37,6 +64,10 @@ export default function DownloadItem({ download }) {
         return 'bg-primary-500';
       case 'paused':
         return 'bg-yellow-500';
+      case 'moving':
+        return 'bg-purple-500';
+      case 'missing_files':
+        return 'bg-orange-500';
       case 'error':
         return 'bg-red-500';
       default:
@@ -51,11 +82,11 @@ export default function DownloadItem({ download }) {
   const total = download.total || 0;
 
   return (
-    <div 
-      className={`theme-bg-tertiary rounded-lg p-4 border transition-colors cursor-pointer ${
-        isHighlighted 
-          ? 'border-primary-400 border-2 theme-bg-hover shadow-lg' 
-          : 'theme-border hover:theme-bg-hover'
+    <div
+      className={`animate-fade-in-up theme-bg-tertiary rounded-2xl p-4 border transition-all cursor-pointer hover:-translate-y-0.5 ${
+        isHighlighted
+          ? 'border-primary-400 border-2 theme-bg-hover shadow-soft-lg'
+          : 'theme-border hover:theme-bg-hover shadow-soft'
       }`}
       onClick={() => setHighlightedDownloadId(download.id)}
     >
@@ -102,8 +133,11 @@ export default function DownloadItem({ download }) {
           </div>
         </div>
         <div className="flex items-center gap-2">
-          <span className={`px-2 py-1 rounded text-xs font-medium ${getStatusColor()} theme-text-primary`}>
-            {download.status}
+          <span className={`px-2 py-1 rounded-full text-xs font-medium ${getStatusColor()} theme-text-primary flex items-center gap-1.5 transition-colors`}>
+            {(download.status === 'downloading' || download.status === 'seeding') && (
+              <span className="w-1.5 h-1.5 rounded-full bg-white animate-pulse-dot" />
+            )}
+            {download.status === 'missing_files' ? 'files missing' : download.status}
           </span>
           {(download.status === 'completed' || download.status === 'seeding') && download.output && (
             <button
@@ -112,6 +146,15 @@ export default function DownloadItem({ download }) {
               title="Open folder"
             >
               <FolderOpen className="w-4 h-4 theme-text-secondary" />
+            </button>
+          )}
+          {download.status === 'seeding' && (
+            <button
+              onClick={(e) => { e.stopPropagation(); handleMove(); }}
+              className="p-1 hover:theme-bg-hover rounded transition-colors"
+              title="Move files (keeps seeding from the new location)"
+            >
+              <FolderInput className="w-4 h-4 theme-text-secondary" />
             </button>
           )}
           {download.status === 'downloading' && (
@@ -149,7 +192,7 @@ export default function DownloadItem({ download }) {
               <RotateCw className="w-4 h-4 theme-text-secondary" />
             </button>
           )}
-          {download.status !== 'completed' && download.status !== 'seeding' && download.status !== 'downloading' && download.status !== 'paused' && download.status !== 'error' && (
+          {download.status !== 'completed' && download.status !== 'seeding' && download.status !== 'downloading' && download.status !== 'paused' && download.status !== 'error' && download.status !== 'moving' && download.status !== 'missing_files' && (
             <button
               onClick={(e) => { e.stopPropagation(); stopDownload(download.id); }}
               className="p-1 hover:theme-bg-hover rounded transition-colors"
@@ -169,6 +212,29 @@ export default function DownloadItem({ download }) {
         </div>
       </div>
 
+      {download.status === 'missing_files' && (
+        <div className="mb-3 p-2 rounded-xl border border-orange-500/50 bg-orange-500/10 flex items-center justify-between gap-2">
+          <div className="flex items-center gap-2 min-w-0">
+            <AlertCircle className="w-4 h-4 text-orange-500 flex-shrink-0" />
+            <span className="text-sm theme-text-secondary truncate">
+              Files not found at the original location - point me to where they went.
+            </span>
+          </div>
+          <button
+            onClick={(e) => { e.stopPropagation(); handleLocate(); }}
+            className="px-2.5 py-1 text-xs font-medium rounded-lg bg-orange-500 text-white hover:bg-orange-600 active:scale-95 transition-all flex-shrink-0"
+          >
+            Locate Files
+          </button>
+        </div>
+      )}
+
+      {relocateError && (
+        <div className="mb-3 p-2 rounded-xl border border-red-500/50 bg-red-500/10 text-sm text-red-500">
+          {relocateError}
+        </div>
+      )}
+
       {/* Progress Bar */}
       <div className="mb-3">
         <div className="flex justify-between text-sm mb-1">
@@ -177,9 +243,13 @@ export default function DownloadItem({ download }) {
         </div>
         <div className="w-full theme-bg-secondary rounded-full h-2 overflow-hidden">
           <div
-            className={`h-2 rounded-full transition-all ${getStatusColor()}`}
+            className={`relative h-2 rounded-full transition-all duration-500 ease-out overflow-hidden ${getStatusColor()}`}
             style={{ width: `${Math.min(progress, 1.0) * 100}%`, maxWidth: '100%' }}
-          />
+          >
+            {(download.status === 'downloading' || download.status === 'seeding') && (
+              <div className="absolute inset-0 bg-gradient-to-r from-transparent via-white/40 to-transparent animate-shimmer" />
+            )}
+          </div>
         </div>
         {(download.speed > 0 || download.status === 'paused') && (
           <div className="flex justify-between text-xs mt-1">

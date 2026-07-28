@@ -76,7 +76,7 @@ function initGoLogFile() {
         console.error(`[Log Init] ✗ Log file was not created at: ${goLogFilePath}`);
       }
       
-      console.log(`\n📝 Go error log file: ${goLogFilePath}`);
+      console.log(`\nGo error log file: ${goLogFilePath}`);
       console.log(`   Tail with: tail -f "${goLogFilePath}"\n`);
       console.log(`   Or use: ./scripts/tail-go-logs.sh\n`);
     } catch (error) {

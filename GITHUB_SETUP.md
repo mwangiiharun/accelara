@@ -1,6 +1,6 @@
 # Quick GitHub Setup Checklist
 
-## On Your Machine (Already Done ✅)
+## On Your Machine (Already Done)
 - [x] Git initialized
 - [x] Remote configured: git@github.com:mwangiiharun/accelara.git
 - [x] Build artifacts cleaned
@@ -40,4 +40,4 @@ git push -u origin main
 - Click on completed workflow
 - Download artifacts from "Artifacts" section
 
-## That's It! 🎉
+## That's It!

@@ -358,12 +358,42 @@ export function DownloadProvider({ children }) {
         });
       };
 
+      const movedHandler = (data) => {
+        const downloadId = data.downloadId;
+        setDownloads((prev) => prev.map((d) =>
+          d.id === downloadId ? { ...d, output: data.newPath, status: 'downloading', error: null } : d
+        ));
+        window.dispatchEvent(new CustomEvent('download-moved', { detail: data }));
+      };
+
+      const relinkedHandler = (data) => {
+        const downloadId = data.downloadId;
+        setDownloads((prev) => prev.map((d) =>
+          d.id === downloadId ? { ...d, output: data.newPath, status: 'downloading', error: null } : d
+        ));
+        window.dispatchEvent(new CustomEvent('download-relinked', { detail: data }));
+      };
+
+      const missingHandler = (data) => {
+        const downloadId = data.downloadId;
+        setDownloads((prev) => prev.map((d) =>
+          d.id === downloadId ? { ...d, status: 'missing_files' } : d
+        ));
+        window.dispatchEvent(new CustomEvent('download-missing', { detail: data }));
+      };
+
       window.electronAPI.onDownloadUpdate(updateHandler);
       window.electronAPI.onDownloadComplete(completeHandler);
+      window.electronAPI.onDownloadMoved(movedHandler);
+      window.electronAPI.onDownloadRelinked(relinkedHandler);
+      window.electronAPI.onDownloadMissing(missingHandler);
 
       return () => {
         window.electronAPI.removeListeners('download-update');
         window.electronAPI.removeListeners('download-complete');
+        window.electronAPI.removeListeners('download-moved');
+        window.electronAPI.removeListeners('download-relinked');
+        window.electronAPI.removeListeners('download-missing');
       };
     }
   }, []);
@@ -491,6 +521,36 @@ export function DownloadProvider({ children }) {
         
         return filtered;
       });
+    }
+  }, []);
+
+  const moveDownload = useCallback(async (downloadId, newParentDir) => {
+    if (!window.electronAPI) return;
+    setDownloads((prev) => prev.map((d) => d.id === downloadId ? { ...d, status: 'moving' } : d));
+    try {
+      await window.electronAPI.moveDownload(downloadId, newParentDir);
+      // Final state (output path, status) arrives via the download-moved event
+    } catch (error) {
+      console.error('[DownloadContext] Failed to move download:', downloadId, error);
+      setDownloads((prev) => prev.map((d) =>
+        d.id === downloadId ? { ...d, status: 'seeding', error: error.message || String(error) } : d
+      ));
+      throw error;
+    }
+  }, []);
+
+  const relinkDownload = useCallback(async (downloadId, locatedParentDir) => {
+    if (!window.electronAPI) return;
+    setDownloads((prev) => prev.map((d) => d.id === downloadId ? { ...d, status: 'moving' } : d));
+    try {
+      await window.electronAPI.relinkDownload(downloadId, locatedParentDir);
+      // Final state (output path, status) arrives via the download-relinked event
+    } catch (error) {
+      console.error('[DownloadContext] Failed to relink download:', downloadId, error);
+      setDownloads((prev) => prev.map((d) =>
+        d.id === downloadId ? { ...d, status: 'missing_files', error: error.message || String(error) } : d
+      ));
+      throw error;
     }
   }, []);
 
@@ -646,8 +706,10 @@ export function DownloadProvider({ children }) {
       pauseDownload, 
       resumeDownload, 
       removeDownload,
+      moveDownload,
+      relinkDownload,
       retryDownload,
-      clearHistory 
+      clearHistory
     }}>
       {children}
     </DownloadContext.Provider>

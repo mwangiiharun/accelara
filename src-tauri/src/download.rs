@@ -152,10 +152,15 @@ pub async fn monitor_download_process_with_streams(
     download_id: String,
     stdout: Option<tokio::process::ChildStdout>,
     stderr: Option<tokio::process::ChildStderr>,
+    download_type: String,
+    output_dir: String,
 ) {
     use crate::logger;
     logger::log_info("monitor_download", &format!("Starting to monitor download: {}", download_id));
-    
+
+    let is_torrent = download_type == "torrent" || download_type == "magnet";
+    let mut watching_seed = false;
+
     if let Some(stdout) = stdout {
         logger::log_info("monitor_download", &format!("[{}] stdout stream available", download_id));
         let mut reader = BufReader::new(stdout);
@@ -228,7 +233,20 @@ pub async fn monitor_download_process_with_streams(
                         save_progress_to_db(id_str, progress, downloaded, total, speed);
                     }
                 }
-                
+
+                // Start watching the seeded file/folder for external moves the
+                // first time this process reports it's seeding. In-memory only -
+                // seeding is a live/display concept, nothing here touches the DB.
+                if is_torrent && !watching_seed {
+                    if json.get("status").and_then(|v| v.as_str()) == Some("seeding") {
+                        if let Some(torrent_name) = json.get("torrent_name").and_then(|v| v.as_str()) {
+                            let tracked_path = std::path::Path::new(&output_dir).join(torrent_name);
+                            crate::monitor::start_watching(&download_id, &tracked_path).await;
+                            watching_seed = true;
+                        }
+                    }
+                }
+
                 // Emit update event
                 let _ = app.emit("download-update", json);
             }
@@ -592,8 +610,7 @@ pub async fn monitor_speed_test_process(
     test_id: String,
 ) {
     use crate::commands::SPEED_TEST_PROCESSES;
-    use tokio::io::AsyncReadExt;
-    
+
     // Get stdout/stderr from the stored process
     let (stdout, stderr) = {
         let mut processes = SPEED_TEST_PROCESSES.lock().await;
@@ -603,26 +620,77 @@ pub async fn monitor_speed_test_process(
             return; // Process not found
         }
     };
-    
+
     tokio::spawn(async move {
-        // Read stderr for errors
-        let mut stderr_buf = String::new();
-        if let Some(mut stderr) = stderr {
-            let _ = stderr.read_to_string(&mut stderr_buf).await;
-            if !stderr_buf.trim().is_empty() {
-                eprintln!("[speed-test {}] Stderr: {}", test_id, stderr_buf.trim());
-                // Don't emit error immediately - wait to see if stdout has valid JSON
-                // Some tools output warnings to stderr but still produce valid JSON
+        // The Go binary streams one JSON object per line as the test
+        // actually progresses (real periodic latency/throughput samples),
+        // so we forward each line live instead of waiting for the whole
+        // process to finish before showing anything.
+        let mut latest_download: f64 = 0.0;
+        let mut latest_upload: f64 = 0.0;
+        let mut latest_latency: Value = Value::Null;
+        let mut saw_any_line = false;
+
+        if let Some(stdout) = stdout {
+            let mut reader = BufReader::new(stdout);
+            let mut line = String::new();
+
+            loop {
+                line.clear();
+                match reader.read_line(&mut line).await {
+                    Ok(0) => break, // EOF
+                    Ok(_) => {
+                        let trimmed = line.trim();
+                        if trimmed.is_empty() {
+                            continue;
+                        }
+                        if let Ok(json) = serde_json::from_str::<Value>(trimmed) {
+                            saw_any_line = true;
+
+                            if let Some(d) = json.get("download_speed").and_then(|v| v.as_f64()) {
+                                if d > 0.0 {
+                                    latest_download = d;
+                                }
+                            }
+                            if let Some(u) = json.get("upload_speed").and_then(|v| v.as_f64()) {
+                                if u > 0.0 {
+                                    latest_upload = u;
+                                }
+                            }
+                            if let Some(lat) = json.get("latency") {
+                                if !lat.is_null() {
+                                    latest_latency = lat.clone();
+                                }
+                            }
+
+                            // Forward immediately, adding camelCase aliases
+                            // for the frontend's flexible field lookups.
+                            let mut event = json.clone();
+                            if let Some(d) = json.get("download_speed").cloned() {
+                                event["downloadSpeed"] = d;
+                            }
+                            if let Some(u) = json.get("upload_speed").cloned() {
+                                event["uploadSpeed"] = u;
+                            }
+                            let _ = app.emit("speed-test-update", event);
+                        } else {
+                            eprintln!("[speed-test {}] Non-JSON line: {}", test_id, trimmed);
+                        }
+                    }
+                    Err(e) => {
+                        eprintln!("[speed-test {}] stdout read error: {}", test_id, e);
+                        break;
+                    }
+                }
             }
         }
-        
-        // Read all stdout - iris outputs a single JSON object
-        let mut stdout_buf = String::new();
-        if let Some(mut stdout) = stdout {
-            let _ = stdout.read_to_string(&mut stdout_buf).await;
+
+        let mut stderr_buf = String::new();
+        if let Some(mut stderr) = stderr {
+            use tokio::io::AsyncReadExt;
+            let _ = stderr.read_to_string(&mut stderr_buf).await;
         }
-        
-        // Wait for process to complete first
+
         let status = {
             let mut processes = SPEED_TEST_PROCESSES.lock().await;
             if let Some(mut child) = processes.remove(&test_id) {
@@ -632,14 +700,14 @@ pub async fn monitor_speed_test_process(
                 return;
             }
         };
-        
+
         let success = status.as_ref().map(|s| s.success()).unwrap_or(false);
-        
-        if !success {
+
+        if !success || !saw_any_line {
             let error_msg = if !stderr_buf.trim().is_empty() {
-                format!("Speed test process failed: {}", stderr_buf.trim())
+                format!("Speed test failed: {}", stderr_buf.trim())
             } else {
-                "Speed test process failed".to_string()
+                "Speed test produced no results. Check your network connection.".to_string()
             };
             let _ = app.emit("speed-test-error", serde_json::json!({
                 "testId": test_id,
@@ -651,149 +719,22 @@ pub async fn monitor_speed_test_process(
             }));
             return;
         }
-        
-        // Parse iris JSON output
-        // Iris format: {"timestamp": "...", "download_mbps": 100.5, "upload_mbps": 50.2, "ping_ms": 25.3, ...}
-        let trimmed_output = stdout_buf.trim();
-        
-        // Check if output is empty
-        if trimmed_output.is_empty() {
-            eprintln!("[speed-test {}] Iris output is empty", test_id);
-            let _ = app.emit("speed-test-error", serde_json::json!({
-                "testId": test_id,
-                "error": "Speed test produced no output. The test may have failed or timed out.",
-            }));
-            let _ = app.emit("speed-test-complete", serde_json::json!({
-                "testId": test_id,
-                "code": 1,
-            }));
-            return;
-        }
-        
-        // Try to extract JSON from output (iris might output other text before/after JSON)
-        let json_start = trimmed_output.find('{');
-        let json_end = trimmed_output.rfind('}');
-        
-        let json_str = if let (Some(start), Some(end)) = (json_start, json_end) {
-            &trimmed_output[start..=end]
-        } else {
-            trimmed_output
-        };
-        
-        let iris_result: Result<serde_json::Value, _> = serde_json::from_str(json_str);
-        
-        if let Ok(iris_json) = iris_result {
-            // Convert iris format to ACCELARA format
-            // Divide by 10 as per requirements, and convert MB/s to bytes/s
-            let download_mbps = iris_json.get("download_mbps").and_then(|v| v.as_f64()).unwrap_or(0.0);
-            let upload_mbps = iris_json.get("upload_mbps").and_then(|v| v.as_f64()).unwrap_or(0.0);
-            let ping_ms = iris_json.get("ping_ms").and_then(|v| v.as_f64()).unwrap_or(0.0);
-            
-            // Convert MB/s to bytes/s, then divide by 10
-            let download_bytes_per_sec = (download_mbps * 1024.0 * 1024.0) / 10.0;
-            let upload_bytes_per_sec = (upload_mbps * 1024.0 * 1024.0) / 10.0;
-            let ping_ms_int = ping_ms as i64;
-            
-            // Build latency object - frontend expects google_ping (snake_case)
-            let latency = if ping_ms_int > 0 {
-                serde_json::json!({
-                    "average": ping_ms_int,
-                    "min": ping_ms_int,
-                    "max": ping_ms_int,
-                    "google_ping": ping_ms_int,
-                    "googlePing": ping_ms_int, // Also include camelCase for compatibility
-                })
-            } else {
-                serde_json::Value::Null
-            };
-            
-            // Build location object
-            let location = if let (Some(city), Some(country)) = (
-                iris_json.get("location").and_then(|l| l.get("city")).and_then(|v| v.as_str()),
-                iris_json.get("location").and_then(|l| l.get("country")).and_then(|v| v.as_str()),
-            ) {
-                serde_json::json!({
-                    "city": city,
-                    "country": country,
-                })
-            } else {
-                serde_json::Value::Null
-            };
-            
-            // Emit speed test update with results
-            // Frontend expects: download_speed, upload_speed, latency (with average/min/max/googlePing)
-            let result = serde_json::json!({
-                "type": "full",
-                "status": "completed",
-                "download_speed": download_bytes_per_sec,
-                "upload_speed": upload_bytes_per_sec,
-                "downloadSpeed": download_bytes_per_sec, // Also include camelCase for compatibility
-                "uploadSpeed": upload_bytes_per_sec,
-                "latency": latency,
-                "location": location,
-                "progress": 100.0,
-            });
-            
-            // Emit updates for each test phase to match frontend expectations
-            // First latency
-            if let Some(_lat) = latency.as_object() {
-                let _ = app.emit("speed-test-update", serde_json::json!({
-                    "type": "latency",
-                    "latency": latency,
-                    "progress": 33.0,
-                }));
-            }
-            
-            // Then download
-            let _ = app.emit("speed-test-update", serde_json::json!({
-                "type": "download",
-                "download_speed": download_bytes_per_sec,
-                "downloadSpeed": download_bytes_per_sec,
-                "progress": 66.0,
-            }));
-            
-            // Then upload
-            let _ = app.emit("speed-test-update", serde_json::json!({
-                "type": "upload",
-                "upload_speed": upload_bytes_per_sec,
-                "uploadSpeed": upload_bytes_per_sec,
-                "progress": 100.0,
-            }));
-            
-            // Final complete result
-            let _ = app.emit("speed-test-update", result.clone());
-            
-            // Also emit completion event
-            let _ = app.emit("speed-test-complete", serde_json::json!({
-                "testId": test_id,
-                "code": 0,
-                "result": result,
-            }));
-        } else {
-            // Failed to parse JSON
-            eprintln!("[speed-test {}] Failed to parse iris output as JSON", test_id);
-            eprintln!("[speed-test {}] Raw stdout (first 500 chars): {}", test_id, 
-                if trimmed_output.len() > 500 { 
-                    format!("{}...", &trimmed_output[..500])
-                } else {
-                    trimmed_output.to_string()
-                });
-            let parse_error = iris_result.err()
-                .map(|e| format!("JSON parse error: {}", e))
-                .unwrap_or_else(|| "Unknown parse error".to_string());
-            let _ = app.emit("speed-test-error", serde_json::json!({
-                "testId": test_id,
-                "error": format!("Failed to parse speed test results. {}. Output: {}", parse_error,
-                    if trimmed_output.len() > 200 {
-                        format!("{}...", &trimmed_output[..200])
-                    } else {
-                        trimmed_output.to_string()
-                    }),
-            }));
-            let _ = app.emit("speed-test-complete", serde_json::json!({
-                "testId": test_id,
-                "code": 1,
-            }));
-        }
+
+        let result = serde_json::json!({
+            "type": "full",
+            "status": "completed",
+            "download_speed": latest_download,
+            "downloadSpeed": latest_download,
+            "upload_speed": latest_upload,
+            "uploadSpeed": latest_upload,
+            "latency": latest_latency,
+            "progress": 100.0,
+        });
+
+        let _ = app.emit("speed-test-complete", serde_json::json!({
+            "testId": test_id,
+            "code": 0,
+            "result": result,
+        }));
     });
 }

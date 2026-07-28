@@ -32,6 +32,28 @@ function AppContent({ startDownload }) {
     };
   }, [showToast]);
 
+  useEffect(() => {
+    // Toast for successful moves/relinks and for files going missing
+    const handleMoved = () => {
+      showToast('Files moved - seeding resumed from the new location', 'success', 5000);
+    };
+    const handleRelinked = () => {
+      showToast('Relinked - seeding resumed from the new location', 'success', 5000);
+    };
+    const handleMissing = () => {
+      showToast('A seeding torrent\'s files went missing - use Locate Files to relink it', 'error', 8000);
+    };
+
+    window.addEventListener('download-moved', handleMoved);
+    window.addEventListener('download-relinked', handleRelinked);
+    window.addEventListener('download-missing', handleMissing);
+    return () => {
+      window.removeEventListener('download-moved', handleMoved);
+      window.removeEventListener('download-relinked', handleRelinked);
+      window.removeEventListener('download-missing', handleMissing);
+    };
+  }, [showToast]);
+
   // Removed debug logging to prevent re-renders
 
   useEffect(() => {

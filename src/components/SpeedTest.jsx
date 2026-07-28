@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef } from 'react';
 import { Download, Upload, Gauge, MapPin, RefreshCw, Play, Square, Trash2 } from 'lucide-react';
-import { formatBytes } from '../utils/format';
+import { formatBytes, bytesPerSecToMbps } from '../utils/format';
 import Speedometer from './Speedometer';
 import SpeedChart from './SpeedChart';
 
@@ -14,6 +14,9 @@ export default function SpeedTest() {
   const [location, setLocation] = useState(null);
   const [progress, setProgress] = useState(0);
   const [history, setHistory] = useState([]);
+  const [liveDownloadHistory, setLiveDownloadHistory] = useState([]);
+  const [liveUploadHistory, setLiveUploadHistory] = useState([]);
+  const [liveLatencyHistory, setLiveLatencyHistory] = useState([]);
   const currentTestIdRef = useRef(null);
   const downloadSpeedRef = useRef(0);
   const uploadSpeedRef = useRef(0);
@@ -39,16 +42,25 @@ export default function SpeedTest() {
             googlePingRef.current = data.latency.googlePing;
           }
           setTestType('latency');
+          if (data.status === 'testing') {
+            setLiveLatencyHistory((prev) => [...prev.slice(-79), { value: data.latency.average }]);
+          }
         } else if (data.type === 'download' && (data.download_speed !== undefined || data.downloadSpeed !== undefined)) {
           const speed = data.download_speed ?? data.downloadSpeed ?? 0;
           setDownloadSpeed(speed);
           downloadSpeedRef.current = speed;
           setTestType('download');
+          if (data.status === 'testing') {
+            setLiveDownloadHistory((prev) => [...prev.slice(-79), { value: speed }]);
+          }
         } else if (data.type === 'upload' && (data.upload_speed !== undefined || data.uploadSpeed !== undefined)) {
           const speed = data.upload_speed ?? data.uploadSpeed ?? 0;
           setUploadSpeed(speed);
           uploadSpeedRef.current = speed;
           setTestType('upload');
+          if (data.status === 'testing') {
+            setLiveUploadHistory((prev) => [...prev.slice(-79), { value: speed }]);
+          }
         } else if (data.type === 'full') {
           // Handle full test results
           if (data.download_speed !== undefined || data.downloadSpeed !== undefined) {
@@ -242,6 +254,9 @@ export default function SpeedTest() {
     setLatency(null);
     setGooglePing(null);
     setProgress(0);
+    setLiveDownloadHistory([]);
+    setLiveUploadHistory([]);
+    setLiveLatencyHistory([]);
 
     try {
       const result = await globalThis.electronAPI.startSpeedTest('full');
@@ -389,7 +404,7 @@ export default function SpeedTest() {
                 <h3 className="text-lg font-semibold theme-text-primary">Download</h3>
               </div>
               <Speedometer
-                value={downloadSpeed > 0 ? (downloadSpeed / 1024 / 1024 * 8) : 0}
+                value={downloadSpeed > 0 ? bytesPerSecToMbps(downloadSpeed) : 0}
                 maxValue={100}
                 unit="Mbps"
                 label={downloadSpeed > 0 ? formatBytes(downloadSpeed) + '/s' : (isRunning ? 'Testing...' : 'Not tested')}
@@ -405,7 +420,7 @@ export default function SpeedTest() {
                 <h3 className="text-lg font-semibold theme-text-primary">Upload</h3>
               </div>
               <Speedometer
-                value={uploadSpeed > 0 ? (uploadSpeed / 1024 / 1024 * 8) : 0}
+                value={uploadSpeed > 0 ? bytesPerSecToMbps(uploadSpeed) : 0}
                 maxValue={100}
                 unit="Mbps"
                 label={uploadSpeed > 0 ? formatBytes(uploadSpeed) + '/s' : (isRunning ? 'Testing...' : 'Not tested')}
@@ -456,6 +471,29 @@ export default function SpeedTest() {
             </div>
           </div>
 
+          {/* Live Test Data - real samples streamed while the test is running */}
+          {(liveDownloadHistory.length > 0 || liveUploadHistory.length > 0 || liveLatencyHistory.length > 0) && (
+            <div className="card mb-6 animate-fade-in-up">
+              <h3 className="text-lg font-semibold theme-text-primary mb-4 flex items-center gap-2">
+                Live Test Data
+                {isRunning && <span className="w-2 h-2 rounded-full bg-primary-500 animate-pulse-dot" />}
+              </h3>
+              <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+                {liveDownloadHistory.length > 0 && (
+                  <SpeedChart title="Live Download Speed" data={liveDownloadHistory} color="#0ea5e9" height={180} />
+                )}
+                {liveUploadHistory.length > 0 && (
+                  <SpeedChart title="Live Upload Speed" data={liveUploadHistory} color="#10b981" height={180} />
+                )}
+              </div>
+              {liveLatencyHistory.length > 0 && (
+                <div className="mt-6">
+                  <SpeedChart title="Live Latency" data={liveLatencyHistory} color="#f59e0b" format="number" height={180} />
+                </div>
+              )}
+            </div>
+          )}
+
           {/* Historical Charts - Always show if history exists */}
           {history.length > 0 ? (
             <div className="card mb-6">
@@ -476,7 +514,7 @@ export default function SpeedTest() {
                     data={history
                       .filter(h => h.downloadSpeed && h.downloadSpeed > 0)
                       .map((result) => ({
-                        value: result.downloadSpeed / 1024 / 1024 * 8, // Convert to Mbps
+                        value: bytesPerSecToMbps(result.downloadSpeed), // Convert to Mbps
                       }))}
                     color="#0ea5e9"
                   />
@@ -487,7 +525,7 @@ export default function SpeedTest() {
                     data={history
                       .filter(h => h.uploadSpeed && h.uploadSpeed > 0)
                       .map((result) => ({
-                        value: result.uploadSpeed / 1024 / 1024 * 8, // Convert to Mbps
+                        value: bytesPerSecToMbps(result.uploadSpeed), // Convert to Mbps
                       }))}
                     color="#10b981"
                   />

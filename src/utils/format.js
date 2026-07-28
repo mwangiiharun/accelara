@@ -12,6 +12,11 @@ export function formatBytes(bytes) {
   return `${value.toFixed(2)} ${units[unitIndex]}`;
 }
 
+export function bytesPerSecToMbps(bytesPerSec) {
+  // 1 Mbps = 1,000,000 bits/sec = 125,000 bytes/sec (decimal, matches how ISPs/Iris report it)
+  return (bytesPerSec * 8) / 1_000_000;
+}
+
 export function formatTime(seconds) {
   if (seconds < 60) return `${Math.round(seconds)}s`;
   if (seconds < 3600) return `${Math.round(seconds / 60)}m`;

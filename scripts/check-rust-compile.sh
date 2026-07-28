@@ -2,7 +2,7 @@
 
 cd "$(dirname "$0")/.."
 
-echo "🔍 Rust Compilation Status Check"
+echo "Rust Compilation Status Check"
 echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
 echo ""
 
@@ -23,21 +23,21 @@ fi
 
 # Count compiled dependencies
 DEPS_COUNT=$(find src-tauri/target/debug/deps -name "*.rlib" 2>/dev/null | wc -l | tr -d ' ')
-echo "📦 Compilation in progress..."
+echo "Compilation in progress..."
 echo "   Compiled dependencies: $DEPS_COUNT"
 echo ""
 
 # Check for cargo processes
 CARGO_PROCESSES=$(ps aux | grep -E "cargo.*run|cargo.*build" | grep -v grep | wc -l | tr -d ' ')
 if [ "$CARGO_PROCESSES" -gt 0 ]; then
-    echo "🔄 Cargo processes running: $CARGO_PROCESSES"
+    echo "Cargo processes running: $CARGO_PROCESSES"
     ps aux | grep -E "cargo.*run|cargo.*build" | grep -v grep | head -2 | awk '{print "   " $11 " " $12 " " $13}'
 else
     echo "⚠️  No active cargo processes found"
 fi
 
 echo ""
-echo "💡 Tip: Watch the terminal running 'npm run dev:tauri' for detailed progress"
+echo "Tip: Watch the terminal running 'npm run dev:tauri' for detailed progress"
 echo "   Look for 'Finished' message when compilation completes"
 
 exit 1

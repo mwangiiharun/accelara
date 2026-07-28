@@ -1,7 +1,7 @@
 #!/bin/bash
 set -e
 
-echo "🚀 Building optimized ACCELARA DMG release..."
+echo "Building optimized ACCELARA DMG release..."
 
 # Colors for output
 RED='\033[0;31m'
