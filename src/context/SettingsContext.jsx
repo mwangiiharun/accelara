@@ -5,6 +5,8 @@ const SettingsContext = createContext();
 export function SettingsProvider({ children }) {
   const [settings, setSettings] = useState({
     concurrency: 8,
+    tvShowsPath: '',
+    moviesPath: '',
     chunkSize: '4MB',
     rateLimit: null,
     uploadLimit: null,

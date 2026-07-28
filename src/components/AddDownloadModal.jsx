@@ -1,8 +1,9 @@
 import { useState, useEffect } from 'react';
 import { useDownloads } from '../context/DownloadContext';
 import { useSettings } from '../context/SettingsContext';
-import { X, File, Folder, Loader2, AlertCircle } from 'lucide-react';
+import { X, File, Folder, Loader2, AlertCircle, Tv, Clapperboard } from 'lucide-react';
 import { formatBytes } from '../utils/format';
+import { detectMediaType, buildLibraryPath } from '../utils/mediaDetect';
 
 export default function AddDownloadModal({ onClose, initialSource = '', autoStart = false }) {
   const { startDownload, resumeDownload } = useDownloads();
@@ -15,6 +16,25 @@ export default function AddDownloadModal({ onClose, initialSource = '', autoStar
   const [httpInfo, setHttpInfo] = useState(null);
   const [inspectError, setInspectError] = useState(null);
   const [downloadId, setDownloadId] = useState(null);
+  const [detected, setDetected] = useState(null); // { type: 'tv'|'movie'|'unknown', title, year, season, episode }
+  const [mediaChoice, setMediaChoice] = useState(null); // manual override: 'tv' | 'movie' | 'other' | null
+
+  const applyDetectedOutput = (detectedResult, choice) => {
+    const defaultPath = settings.defaultDownloadPath || (typeof require !== 'undefined' ? require('os').homedir() + '/Downloads' : '~/Downloads');
+    const effectiveType = choice === 'other' ? 'unknown' : (choice || detectedResult.type);
+    const path = buildLibraryPath(
+      { ...detectedResult, type: effectiveType },
+      { tvShowsPath: settings.tvShowsPath, moviesPath: settings.moviesPath, defaultPath }
+    );
+    setOutput(path);
+  };
+
+  const handleMediaChoice = (choice) => {
+    setMediaChoice(choice);
+    if (detected) {
+      applyDetectedOutput(detected, choice);
+    }
+  };
 
   // Update source when initialSource changes (e.g., from external click)
   useEffect(() => {
@@ -39,6 +59,8 @@ export default function AddDownloadModal({ onClose, initialSource = '', autoStar
       setInspectError(null);
       setTorrentInfo(null);
       setHttpInfo(null);
+      setDetected(null);
+      setMediaChoice(null);
 
       try {
         // Check if it's a torrent
@@ -66,10 +88,10 @@ export default function AddDownloadModal({ onClose, initialSource = '', autoStar
             console.log('Torrent inspection result:', info);
             setTorrentInfo(info);
             setInspectError(null);
-            // Auto-set output filename if not set
-            if (!output && info.name) {
-              const defaultPath = settings.defaultDownloadPath || require('os').homedir() + '/Downloads';
-              setOutput(defaultPath);
+            if (info.name) {
+              const d = detectMediaType(info.name);
+              setDetected(d);
+              applyDetectedOutput(d, null);
             }
           } catch (error) {
             console.error('Torrent inspection error:', error);
@@ -88,10 +110,17 @@ export default function AddDownloadModal({ onClose, initialSource = '', autoStar
           // Get HTTP file info
           const info = await globalThis.electronAPI.getHTTPInfo(source);
           setHttpInfo(info);
-          // Auto-set output filename if not set
-          if (!output && info.fileName) {
-            const defaultPath = settings.defaultDownloadPath || require('os').homedir() + '/Downloads';
-            setOutput(defaultPath + '/' + info.fileName);
+          if (info.fileName) {
+            const d = detectMediaType(info.fileName);
+            setDetected(d);
+            const defaultPath = settings.defaultDownloadPath || (typeof require !== 'undefined' ? require('os').homedir() + '/Downloads' : '~/Downloads');
+            if (d.type === 'unknown') {
+              // HTTP files are usually single files, not a library folder -
+              // keep the existing behavior of appending the filename.
+              setOutput(defaultPath + '/' + info.fileName);
+            } else {
+              applyDetectedOutput(d, null);
+            }
           }
         }
       } catch (error) {
@@ -283,6 +312,82 @@ export default function AddDownloadModal({ onClose, initialSource = '', autoStar
               </button>
             </div>
           </div>
+
+          {/* Media Type Detection */}
+          {detected && (() => {
+            const effectiveType = mediaChoice || detected.type;
+            const resolved = effectiveType === 'tv' || effectiveType === 'movie';
+            return (
+            <div className="p-3 theme-bg-tertiary rounded-xl border theme-border animate-fade-in-up">
+              {resolved ? (
+                <div className="flex items-center gap-2 text-sm">
+                  {effectiveType === 'tv' ? (
+                    <Tv className="w-4 h-4 text-primary-400 flex-shrink-0" />
+                  ) : (
+                    <Clapperboard className="w-4 h-4 text-primary-400 flex-shrink-0" />
+                  )}
+                  <span className="theme-text-secondary">
+                    Detected as a {effectiveType === 'tv' ? 'TV show' : 'movie'}:
+                  </span>
+                  <span className="theme-text-primary font-medium truncate">
+                    {detected.title}
+                    {detected.season && ` - Season ${detected.season}`}
+                    {detected.year && ` (${detected.year})`}
+                  </span>
+                  <button
+                    type="button"
+                    onClick={() => handleMediaChoice(effectiveType === 'tv' ? 'movie' : 'tv')}
+                    className="text-xs theme-text-tertiary hover:theme-text-primary underline ml-auto flex-shrink-0"
+                  >
+                    Not right?
+                  </button>
+                </div>
+              ) : mediaChoice === 'other' ? (
+                <div className="flex items-center gap-2 text-sm">
+                  <span className="theme-text-secondary">
+                    Filed as a regular download (not TV/movie library-sorted).
+                  </span>
+                  <button
+                    type="button"
+                    onClick={() => setMediaChoice(null)}
+                    className="text-xs theme-text-tertiary hover:theme-text-primary underline ml-auto flex-shrink-0"
+                  >
+                    Not right?
+                  </button>
+                </div>
+              ) : (
+                <div className="flex items-center gap-3 text-sm">
+                  <span className="theme-text-secondary">Is this a TV show or a movie?</span>
+                  <div className="flex gap-2 ml-auto">
+                    <button
+                      type="button"
+                      onClick={() => handleMediaChoice('tv')}
+                      className="btn-secondary px-3 py-1 text-xs flex items-center gap-1.5"
+                    >
+                      <Tv className="w-3.5 h-3.5" />
+                      TV Show
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => handleMediaChoice('movie')}
+                      className="btn-secondary px-3 py-1 text-xs flex items-center gap-1.5"
+                    >
+                      <Clapperboard className="w-3.5 h-3.5" />
+                      Movie
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => handleMediaChoice('other')}
+                      className="btn-secondary px-3 py-1 text-xs"
+                    >
+                      Other
+                    </button>
+                  </div>
+                </div>
+              )}
+            </div>
+            );
+          })()}
 
           {/* Torrent Info Preview */}
           {inspecting && (

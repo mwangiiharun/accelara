@@ -12,6 +12,8 @@ export default function SettingsPanel() {
   // Local state for text inputs that require Apply button
   const [localSettings, setLocalSettings] = useState({
     defaultDownloadPath: '',
+    tvShowsPath: '',
+    moviesPath: '',
     chunkSize: '4MB',
     rateLimit: null,
     uploadLimit: null,
@@ -25,6 +27,8 @@ export default function SettingsPanel() {
   useEffect(() => {
     setLocalSettings({
       defaultDownloadPath: settings.defaultDownloadPath || '',
+      tvShowsPath: settings.tvShowsPath || '',
+      moviesPath: settings.moviesPath || '',
       chunkSize: settings.chunkSize || '4MB',
       rateLimit: settings.rateLimit || null,
       uploadLimit: settings.uploadLimit || null,
@@ -126,6 +130,81 @@ export default function SettingsPanel() {
             }}
             className="btn-secondary px-4 flex items-center gap-2"
             title="Select default download folder"
+          >
+            <Folder className="w-4 h-4" />
+            Browse
+          </button>
+        </div>
+      </div>
+
+      {/* Plex-style Library Paths */}
+      <div>
+        <label className="block text-sm font-medium theme-text-secondary mb-2">
+          TV Shows Library
+        </label>
+        <p className="text-xs theme-text-tertiary mb-2">
+          When a torrent/download is detected as a TV show, it's sorted into {'{'}this folder{'}'}/Show Name/Season NN/ automatically.
+        </p>
+        <div className="flex gap-2">
+          <input
+            type="text"
+            value={localSettings.tvShowsPath}
+            onChange={(e) => handleLocalChange('tvShowsPath', e.target.value)}
+            className="input-field flex-1"
+            placeholder="Leave blank to disable auto-sorting for TV shows"
+          />
+          <button
+            onClick={async () => {
+              if (window.electronAPI) {
+                try {
+                  const folderPath = await window.electronAPI.selectDownloadFolder();
+                  if (folderPath) {
+                    handleLocalChange('tvShowsPath', folderPath);
+                  }
+                } catch (error) {
+                  console.error('Failed to select TV shows folder:', error);
+                }
+              }
+            }}
+            className="btn-secondary px-4 flex items-center gap-2"
+            title="Select TV shows library folder"
+          >
+            <Folder className="w-4 h-4" />
+            Browse
+          </button>
+        </div>
+      </div>
+
+      <div>
+        <label className="block text-sm font-medium theme-text-secondary mb-2">
+          Movies Library
+        </label>
+        <p className="text-xs theme-text-tertiary mb-2">
+          When a torrent/download is detected as a movie, it's sorted into {'{'}this folder{'}'}/Movie Name (Year)/ automatically.
+        </p>
+        <div className="flex gap-2">
+          <input
+            type="text"
+            value={localSettings.moviesPath}
+            onChange={(e) => handleLocalChange('moviesPath', e.target.value)}
+            className="input-field flex-1"
+            placeholder="Leave blank to disable auto-sorting for movies"
+          />
+          <button
+            onClick={async () => {
+              if (window.electronAPI) {
+                try {
+                  const folderPath = await window.electronAPI.selectDownloadFolder();
+                  if (folderPath) {
+                    handleLocalChange('moviesPath', folderPath);
+                  }
+                } catch (error) {
+                  console.error('Failed to select movies folder:', error);
+                }
+              }
+            }}
+            className="btn-secondary px-4 flex items-center gap-2"
+            title="Select movies library folder"
           >
             <Folder className="w-4 h-4" />
             Browse

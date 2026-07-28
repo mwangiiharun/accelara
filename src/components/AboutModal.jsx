@@ -7,7 +7,7 @@ export default function AboutModal({ onClose }) {
   const [isDownloading, setIsDownloading] = useState(false);
   const [downloadProgress, setDownloadProgress] = useState(0);
   const [downloadPath, setDownloadPath] = useState(null);
-  const [currentVersion] = useState('3.1.2'); // This should match package.json version
+  const [currentVersion] = useState('3.1.3'); // This should match package.json version
   
   // Listen for update-available events from background checks
   useEffect(() => {
