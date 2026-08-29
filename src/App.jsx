@@ -38,10 +38,10 @@ function AppContent({ startDownload }) {
       showToast('Files moved - seeding resumed from the new location', 'success', 5000);
     };
     const handleRelinked = () => {
-      showToast('Relinked - seeding resumed from the new location', 'success', 5000);
+      showToast('Relinked - download resumed from the new location', 'success', 5000);
     };
     const handleMissing = () => {
-      showToast('A seeding torrent\'s files went missing - use Locate Files to relink it', 'error', 8000);
+      showToast('A download\'s files went missing - use Locate Files to relink it', 'error', 8000);
     };
 
     window.addEventListener('download-moved', handleMoved);

@@ -637,7 +637,7 @@ pub async fn move_download(
 
 // Handler: relink-download - point a download whose files were moved
 // externally (outside the app) at their new location. Nothing is moved on
-// disk here; the user already did that.
+// disk here; the user already picked the folder that now holds them.
 #[command]
 pub async fn relink_download(
     download_id: String,
@@ -646,17 +646,13 @@ pub async fn relink_download(
 ) -> Result<(), String> {
     let conn = database::get_connection()
         .map_err(|e| format!("Database error: {}", e))?;
-    let download_type: String = conn.query_row(
-        "SELECT type FROM downloads WHERE id = ?1",
+    let (download_type, current_output): (String, String) = conn.query_row(
+        "SELECT type, output FROM downloads WHERE id = ?1",
         [&download_id],
-        |row| row.get(0),
+        |row| Ok((row.get(0)?, row.get(1)?)),
     )
     .map_err(|_| "Download not found".to_string())?;
     drop(conn);
-
-    if download_type != "torrent" && download_type != "magnet" {
-        return Err("Only torrents can be relinked".to_string());
-    }
 
     let located_parent = utils::expand_path(&located_parent_dir);
     let located_parent_path = std::path::Path::new(&located_parent);
@@ -673,11 +669,24 @@ pub async fn relink_download(
         return Err("That folder is empty - relinking here would start the download over from scratch".to_string());
     }
 
-    repoint_and_restart(&app, &download_id, located_parent_path).await?;
+    // Torrents store their whole data directory as `output`; HTTP downloads
+    // store the final file path, so relinking has to reattach the original
+    // file name inside the folder the user pointed us at.
+    let new_output_path = if download_type == "torrent" || download_type == "magnet" {
+        located_parent_path.to_path_buf()
+    } else {
+        let file_name = std::path::Path::new(&current_output)
+            .file_name()
+            .ok_or_else(|| "Could not determine the file's original name".to_string())?
+            .to_owned();
+        located_parent_path.join(file_name)
+    };
+
+    repoint_and_restart(&app, &download_id, &new_output_path).await?;
 
     app.emit("download-relinked", serde_json::json!({
         "downloadId": download_id,
-        "newPath": located_parent_path.to_string_lossy(),
+        "newPath": new_output_path.to_string_lossy(),
     }))
     .map_err(|e| format!("Failed to emit event: {}", e))?;
 
@@ -843,10 +852,15 @@ async fn resume_download_internal(
     eprintln!("  - Existing progress: {:.2}% ({} / {} bytes)", 
               existing_progress * 100.0, existing_downloaded, existing_total);
     
-    // Check for existing files based on download type
+    // Check for existing files based on download type. If we previously
+    // recorded real progress but the data isn't where we left it (folder
+    // moved/deleted while the app was closed - monitor.rs only watches
+    // while the app is running), don't blindly spawn a fresh download into
+    // the old path. Mark it missing instead and let the user relink it.
     use std::path::Path;
     let output_path = Path::new(&expanded_output);
-    
+    let mut files_present = true;
+
     if _download_type == "http" {
         // HTTP downloads: Check for chunk files in temp directory
         eprintln!("  - Checking for existing chunk files at: {}", expanded_output);
@@ -878,9 +892,11 @@ async fn resume_download_internal(
                         }
                         if chunk_files.is_empty() {
                             eprintln!("  - ⚠️  WARNING: Temp directory exists but no chunk files found!");
+                            files_present = output_path.exists();
                         }
                     } else {
                         eprintln!("  - ⚠️  ERROR: Cannot read temp directory");
+                        files_present = output_path.exists();
                     }
                 } else {
                     eprintln!("  - ⚠️  WARNING: Temp directory not found: {}", temp_dir.display());
@@ -895,6 +911,10 @@ async fn resume_download_internal(
                             }
                         }
                     }
+                    // Temp dir gone and the final file isn't sitting there
+                    // either - this is the "resumed after the folder moved"
+                    // case, not a legitimately-fresh download.
+                    files_present = output_path.exists();
                 }
             } else {
                 eprintln!("  - ⚠️  ERROR: Cannot get parent directory from: {}", expanded_output);
@@ -939,15 +959,18 @@ async fn resume_download_internal(
                     }
                     if dirs.is_empty() && files.is_empty() {
                         eprintln!("  - ⚠️  WARNING: Output directory exists but is empty!");
+                        files_present = false;
                     }
                 } else {
                     eprintln!("  - ⚠️  ERROR: Cannot read output directory");
                 }
             } else {
                 eprintln!("  - ⚠️  WARNING: Output path exists but is not a directory: {}", expanded_output);
+                files_present = false;
             }
         } else {
             eprintln!("  - ⚠️  WARNING: Output directory does not exist: {}", expanded_output);
+            files_present = false;
             // Check if parent directory exists
             if let Some(parent) = output_path.parent() {
                 eprintln!("  - Parent directory exists: {}", parent.exists());
@@ -964,7 +987,22 @@ async fn resume_download_internal(
             }
         }
     }
-    
+
+    // We had real progress recorded but the data isn't where we left it -
+    // the folder was moved or deleted while the app wasn't running to
+    // notice (monitor.rs only watches live). Spawning here would just have
+    // the Go binary recreate an empty path and start over from zero, which
+    // looks like a silent restart. Mark it missing and let the user relink
+    // it to wherever the files actually are instead.
+    if !files_present && existing_downloaded > 0 {
+        eprintln!(
+            "[resume-download] Data missing at {} despite {} bytes of recorded progress - marking missing instead of restarting",
+            expanded_output, existing_downloaded
+        );
+        drop(processes);
+        return mark_download_missing(&app, &download_id).await;
+    }
+
     // Find and verify Go binary
     let go_binary = utils::find_go_binary()
         .ok_or_else(|| {
