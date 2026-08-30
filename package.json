@@ -1,6 +1,6 @@
 {
   "name": "accelara",
-  "version": "3.1.4",
+  "version": "3.2.0",
   "type": "commonjs",
   "description": "ACCELARA - Unified HTTP + BitTorrent CLI Download Manager with Tauri GUI",
   "productName": "ACCELARA",
