@@ -409,8 +409,10 @@ pub async fn remove_download(
         .map_err(|e| format!("Failed to delete download: {}", e))?;
 
     crate::monitor::stop_watching(&download_id).await;
-    
-    // Try to delete partial files if they exist
+
+    // Try to delete partial files if they exist. Goes through the OS's
+    // native trash (Finder Trash / XDG trash / Recycle Bin) rather than
+    // unlinking outright, so an accidental removal is still recoverable.
     if let Ok(output_path) = output {
         if let Some(path) = std::path::Path::new(&output_path).parent() {
             if path.exists() {
@@ -419,7 +421,7 @@ pub async fn remove_download(
                     for entry in entries.flatten() {
                         if let Some(name) = entry.file_name().to_str() {
                             if name.starts_with(".accelara-temp-") {
-                                let _ = std::fs::remove_dir_all(entry.path());
+                                let _ = trash::delete(entry.path());
                             }
                         }
                     }
@@ -689,6 +691,47 @@ pub async fn relink_download(
         "newPath": new_output_path.to_string_lossy(),
     }))
     .map_err(|e| format!("Failed to emit event: {}", e))?;
+
+    // Other downloads pointed at the exact same folder (e.g. sibling
+    // episodes of a show that share a season folder) went missing for the
+    // same reason this one did, and the user just told us where that whole
+    // folder ended up - so re-home them too instead of making the user
+    // repeat this once per episode.
+    // Block-scoped so the connection/statement (neither Send) are fully
+    // dropped before the `.await`s below.
+    let siblings: Vec<(String, String, String)> = {
+        let conn = database::get_connection()
+            .map_err(|e| format!("Database error: {}", e))?;
+        let mut stmt = conn.prepare(
+            "SELECT id, type, output FROM downloads WHERE output = ?1 AND id != ?2 AND status = 'missing_files'"
+        ).map_err(|e| format!("Failed to prepare statement: {}", e))?;
+        let rows = stmt.query_map(
+            rusqlite::params![current_output, download_id],
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+        )
+        .map_err(|e| format!("Failed to query siblings: {}", e))?
+        .filter_map(|r| r.ok())
+        .collect();
+        rows
+    };
+
+    for (sibling_id, sibling_type, sibling_output) in siblings {
+        let sibling_new_path = if sibling_type == "torrent" || sibling_type == "magnet" {
+            located_parent_path.to_path_buf()
+        } else {
+            match std::path::Path::new(&sibling_output).file_name() {
+                Some(name) => located_parent_path.join(name),
+                None => continue,
+            }
+        };
+
+        if repoint_and_restart(&app, &sibling_id, &sibling_new_path).await.is_ok() {
+            let _ = app.emit("download-relinked", serde_json::json!({
+                "downloadId": sibling_id,
+                "newPath": sibling_new_path.to_string_lossy(),
+            }));
+        }
+    }
 
     Ok(())
 }
@@ -1383,7 +1426,9 @@ pub async fn clear_junk_data() -> Result<serde_json::Value, String> {
                         if let Ok(metadata) = entry.metadata() {
                             if metadata.is_dir() {
                                 let size = calculate_dir_size(entry.path()).unwrap_or(0);
-                                if fs::remove_dir_all(entry.path()).is_ok() {
+                                // Native trash, not a hard delete - "junk" is
+                                // just our best guess, and it's still user data.
+                                if trash::delete(entry.path()).is_ok() {
                                     deleted_size += size;
                                     deleted_count += 1;
                                 }
@@ -1568,7 +1613,10 @@ pub async fn get_settings() -> Result<serde_json::Value, String> {
     
     let mut stmt = conn.prepare("SELECT key, value FROM settings")
         .map_err(|e| format!("Failed to prepare statement: {}", e))?;
-    
+
+    let default_download_dir = dirs::download_dir()
+        .unwrap_or_else(|| dirs::home_dir().unwrap().join("Downloads"));
+
     let mut settings = serde_json::json!({
         "concurrency": 8,
         "chunkSize": "4MB",
@@ -1583,10 +1631,13 @@ pub async fn get_settings() -> Result<serde_json::Value, String> {
         "torrentPort": 42069,
         "autoCheckForUpdates": true,
         "updateCheckInterval": 24,
-        "defaultDownloadPath": dirs::download_dir()
-            .unwrap_or_else(|| dirs::home_dir().unwrap().join("Downloads"))
-            .to_string_lossy()
-            .to_string(),
+        "defaultDownloadPath": default_download_dir.to_string_lossy().to_string(),
+        // Sort into a proper library by default (Plex-style for TV/movies, a
+        // flat folder for installers) - users can still blank these out in
+        // Settings to opt back out of auto-sorting entirely.
+        "tvShowsPath": default_download_dir.join("TV Shows").to_string_lossy().to_string(),
+        "moviesPath": default_download_dir.join("Movies").to_string_lossy().to_string(),
+        "softwarePath": default_download_dir.join("Software").to_string_lossy().to_string(),
     });
     
     let rows = stmt.query_map([], |row| {

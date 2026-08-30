@@ -7,6 +7,7 @@ export function SettingsProvider({ children }) {
     concurrency: 8,
     tvShowsPath: '',
     moviesPath: '',
+    softwarePath: '',
     chunkSize: '4MB',
     rateLimit: null,
     uploadLimit: null,

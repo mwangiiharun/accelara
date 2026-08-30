@@ -1,7 +1,7 @@
 import { useState, useEffect } from 'react';
 import { useDownloads } from '../context/DownloadContext';
 import { useSettings } from '../context/SettingsContext';
-import { X, File, Folder, Loader2, AlertCircle, Tv, Clapperboard } from 'lucide-react';
+import { X, File, Folder, Loader2, AlertCircle, Tv, Clapperboard, Package } from 'lucide-react';
 import { formatBytes } from '../utils/format';
 import { detectMediaType, buildLibraryPath } from '../utils/mediaDetect';
 
@@ -16,8 +16,9 @@ export default function AddDownloadModal({ onClose, initialSource = '', autoStar
   const [httpInfo, setHttpInfo] = useState(null);
   const [inspectError, setInspectError] = useState(null);
   const [downloadId, setDownloadId] = useState(null);
-  const [detected, setDetected] = useState(null); // { type: 'tv'|'movie'|'unknown', title, year, season, episode }
-  const [mediaChoice, setMediaChoice] = useState(null); // manual override: 'tv' | 'movie' | 'other' | null
+  const [detected, setDetected] = useState(null); // { type: 'tv'|'movie'|'software'|'unknown', title, year, season, episode }
+  const [mediaChoice, setMediaChoice] = useState(null); // manual override: 'tv' | 'movie' | 'software' | 'other' | null
+  const [pickerOpen, setPickerOpen] = useState(false); // user asked to re-pick via "Not right?"
   const [sourceNameInfo, setSourceNameInfo] = useState(null); // { rawName, isHttp }
 
   const applyDetectedOutput = (detectedResult, choice, nameInfo = sourceNameInfo) => {
@@ -25,7 +26,7 @@ export default function AddDownloadModal({ onClose, initialSource = '', autoStar
     const effectiveType = choice === 'other' ? 'unknown' : (choice || detectedResult.type);
     const path = buildLibraryPath(
       { ...detectedResult, type: effectiveType },
-      { tvShowsPath: settings.tvShowsPath, moviesPath: settings.moviesPath, defaultPath },
+      { tvShowsPath: settings.tvShowsPath, moviesPath: settings.moviesPath, softwarePath: settings.softwarePath, defaultPath },
       nameInfo
         ? { rawName: nameInfo.rawName, fileName: nameInfo.isHttp ? nameInfo.rawName : undefined }
         : {}
@@ -35,6 +36,7 @@ export default function AddDownloadModal({ onClose, initialSource = '', autoStar
 
   const handleMediaChoice = (choice) => {
     setMediaChoice(choice);
+    setPickerOpen(false);
     if (detected) {
       applyDetectedOutput(detected, choice);
     }
@@ -65,6 +67,7 @@ export default function AddDownloadModal({ onClose, initialSource = '', autoStar
       setHttpInfo(null);
       setDetected(null);
       setMediaChoice(null);
+      setPickerOpen(false);
 
       try {
         // Check if it's a torrent
@@ -317,18 +320,21 @@ export default function AddDownloadModal({ onClose, initialSource = '', autoStar
           {/* Media Type Detection */}
           {detected && (() => {
             const effectiveType = mediaChoice || detected.type;
-            const resolved = effectiveType === 'tv' || effectiveType === 'movie';
+            const resolved = !pickerOpen && (effectiveType === 'tv' || effectiveType === 'movie' || effectiveType === 'software');
+            const typeLabel = effectiveType === 'tv' ? 'a TV show' : effectiveType === 'movie' ? 'a movie' : 'software';
             return (
             <div className="p-3 theme-bg-tertiary rounded-xl border theme-border animate-fade-in-up">
               {resolved ? (
                 <div className="flex items-center gap-2 text-sm">
                   {effectiveType === 'tv' ? (
                     <Tv className="w-4 h-4 text-primary-400 flex-shrink-0" />
-                  ) : (
+                  ) : effectiveType === 'movie' ? (
                     <Clapperboard className="w-4 h-4 text-primary-400 flex-shrink-0" />
+                  ) : (
+                    <Package className="w-4 h-4 text-primary-400 flex-shrink-0" />
                   )}
                   <span className="theme-text-secondary">
-                    Detected as a {effectiveType === 'tv' ? 'TV show' : 'movie'}:
+                    Detected as {typeLabel}:
                   </span>
                   <span className="theme-text-primary font-medium truncate">
                     {detected.title}
@@ -337,20 +343,20 @@ export default function AddDownloadModal({ onClose, initialSource = '', autoStar
                   </span>
                   <button
                     type="button"
-                    onClick={() => handleMediaChoice(effectiveType === 'tv' ? 'movie' : 'tv')}
+                    onClick={() => setPickerOpen(true)}
                     className="text-xs theme-text-tertiary hover:theme-text-primary underline ml-auto flex-shrink-0"
                   >
                     Not right?
                   </button>
                 </div>
-              ) : mediaChoice === 'other' ? (
+              ) : mediaChoice === 'other' && !pickerOpen ? (
                 <div className="flex items-center gap-2 text-sm">
                   <span className="theme-text-secondary">
-                    Filed as a regular download (not TV/movie library-sorted).
+                    Filed as a regular download (not library-sorted).
                   </span>
                   <button
                     type="button"
-                    onClick={() => setMediaChoice(null)}
+                    onClick={() => setPickerOpen(true)}
                     className="text-xs theme-text-tertiary hover:theme-text-primary underline ml-auto flex-shrink-0"
                   >
                     Not right?
@@ -358,7 +364,7 @@ export default function AddDownloadModal({ onClose, initialSource = '', autoStar
                 </div>
               ) : (
                 <div className="flex items-center gap-3 text-sm">
-                  <span className="theme-text-secondary">Is this a TV show or a movie?</span>
+                  <span className="theme-text-secondary">What is this?</span>
                   <div className="flex gap-2 ml-auto">
                     <button
                       type="button"
@@ -375,6 +381,14 @@ export default function AddDownloadModal({ onClose, initialSource = '', autoStar
                     >
                       <Clapperboard className="w-3.5 h-3.5" />
                       Movie
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => handleMediaChoice('software')}
+                      className="btn-secondary px-3 py-1 text-xs flex items-center gap-1.5"
+                    >
+                      <Package className="w-3.5 h-3.5" />
+                      Software
                     </button>
                     <button
                       type="button"

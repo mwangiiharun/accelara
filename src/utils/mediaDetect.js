@@ -5,6 +5,11 @@
 
 const QUALITY_TAGS = /\b(1080p|720p|2160p|480p|4k|uhd|hdr|10bit|8bit|x264|x265|h264|h265|hevc|avc|web-?dl|webrip|web|bluray|blu-ray|brrip|bdrip|dvdrip|hdtv|hdrip|camrip|amzn|nf|hulu|dsnp|atvp|remux|proper|repack|extended|unrated|directors?\.?cut|multi|dual\s?audio|aac\d?|ac3|dts(-hd)?|5\.1|7\.1)\b/gi;
 
+// Installer/package extensions are an unambiguous, high-confidence signal -
+// checked before any TV/movie pattern so a release like "MyApp.2024.Setup.exe"
+// isn't mistaken for a 2024 movie.
+const SOFTWARE_EXTENSIONS = /\.(exe|msi|dmg|pkg|deb|rpm|appimage|apk)$/i;
+
 // Strip a trailing file extension generically (rather than a hardcoded
 // list) so unusual extensions (.iso, .exe, .epub, ...) don't get left
 // dangling as a stray word. Requires at least one letter in the candidate
@@ -29,8 +34,9 @@ function cleanTitle(raw) {
 }
 
 /**
- * Detect whether a release name looks like a TV show or a movie.
- * Returns { type: 'tv'|'movie'|'unknown', title, year, season, episode }
+ * Detect whether a release name looks like a TV show, movie, or software
+ * installer. Returns { type: 'tv'|'movie'|'software'|'unknown', title, year,
+ * season, episode }
  */
 export function detectMediaType(rawName) {
   if (!rawName) {
@@ -38,6 +44,11 @@ export function detectMediaType(rawName) {
   }
 
   let name = rawName.split('/').pop().split('\\').pop();
+
+  if (SOFTWARE_EXTENSIONS.test(name)) {
+    return { type: 'software', title: cleanTitle(stripExtension(name)), year: null, season: null, episode: null };
+  }
+
   name = stripExtension(name);
   name = name.replace(/[._]/g, ' ').trim();
 
@@ -98,7 +109,7 @@ export function hasExtension(name) {
  * torrents, where the output is just the destination directory and the Go
  * downloader appends the torrent's own name itself.
  */
-export function buildLibraryPath(detected, { tvShowsPath, moviesPath, defaultPath }, opts = {}) {
+export function buildLibraryPath(detected, { tvShowsPath, moviesPath, softwarePath, defaultPath }, opts = {}) {
   const { rawName, fileName } = opts;
   const title = detected.title || 'Unknown';
   let folder;
@@ -109,6 +120,10 @@ export function buildLibraryPath(detected, { tvShowsPath, moviesPath, defaultPat
   } else if (detected.type === 'movie' && moviesPath) {
     const folderName = detected.year ? `${title} (${detected.year})` : title;
     folder = `${moviesPath}/${folderName}`;
+  } else if (detected.type === 'software' && softwarePath) {
+    // Installers are standalone files, not multi-file releases needing
+    // their own per-title folder the way Plex expects for TV/movies.
+    folder = softwarePath;
   } else if (hasExtension(rawName)) {
     folder = `${defaultPath}/${title}`;
   } else {

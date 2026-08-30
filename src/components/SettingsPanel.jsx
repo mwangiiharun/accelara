@@ -14,6 +14,7 @@ export default function SettingsPanel() {
     defaultDownloadPath: '',
     tvShowsPath: '',
     moviesPath: '',
+    softwarePath: '',
     chunkSize: '4MB',
     rateLimit: null,
     uploadLimit: null,
@@ -29,6 +30,7 @@ export default function SettingsPanel() {
       defaultDownloadPath: settings.defaultDownloadPath || '',
       tvShowsPath: settings.tvShowsPath || '',
       moviesPath: settings.moviesPath || '',
+      softwarePath: settings.softwarePath || '',
       chunkSize: settings.chunkSize || '4MB',
       rateLimit: settings.rateLimit || null,
       uploadLimit: settings.uploadLimit || null,
@@ -205,6 +207,43 @@ export default function SettingsPanel() {
             }}
             className="btn-secondary px-4 flex items-center gap-2"
             title="Select movies library folder"
+          >
+            <Folder className="w-4 h-4" />
+            Browse
+          </button>
+        </div>
+      </div>
+
+      <div>
+        <label className="block text-sm font-medium theme-text-secondary mb-2">
+          Software Library
+        </label>
+        <p className="text-xs theme-text-tertiary mb-2">
+          When a download is detected as a software installer (.exe, .dmg, .pkg, .deb, .rpm, ...), it's placed into {'{'}this folder{'}'} automatically.
+        </p>
+        <div className="flex gap-2">
+          <input
+            type="text"
+            value={localSettings.softwarePath}
+            onChange={(e) => handleLocalChange('softwarePath', e.target.value)}
+            className="input-field flex-1"
+            placeholder="Leave blank to disable auto-sorting for software"
+          />
+          <button
+            onClick={async () => {
+              if (window.electronAPI) {
+                try {
+                  const folderPath = await window.electronAPI.selectDownloadFolder();
+                  if (folderPath) {
+                    handleLocalChange('softwarePath', folderPath);
+                  }
+                } catch (error) {
+                  console.error('Failed to select software folder:', error);
+                }
+              }
+            }}
+            className="btn-secondary px-4 flex items-center gap-2"
+            title="Select software library folder"
           >
             <Folder className="w-4 h-4" />
             Browse
