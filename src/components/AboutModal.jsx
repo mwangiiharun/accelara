@@ -302,7 +302,7 @@ export default function AboutModal({ onClose }) {
               High-performance unified HTTP + BitTorrent download manager
             </p>
             <p className="text-sm">
-              Copyright © 2025 <span className="font-medium theme-text-primary">Mwangii Kinuthia</span>
+              Copyright © {new Date().getFullYear()} <span className="font-medium theme-text-primary">Mwangii Kinuthia</span>
             </p>
             <p className="text-xs theme-text-tertiary mt-2">
               Built with Tauri for native performance and smaller bundle size
